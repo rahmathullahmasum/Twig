@@ -1,0 +1,9 @@
+node_modules
+.DS_Store
+/.cache
+/build
+.env
+.env.*
+!.env.example
+.react-router/
+*.tsbuildinfo

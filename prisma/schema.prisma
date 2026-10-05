@@ -1,0 +1,177 @@
+// Shopify App Portfolio Dashboard — Prisma schema (PostgreSQL)
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// One row per app you want tracked. Added manually (there's no "list all my
+// apps" query in the Partner API) via the Apps page in this dashboard --
+// paste the app's Partner GID (gid://partners/App/<id>, the <id> comes from
+// the app's URL in the Partner Dashboard) and a display name.
+model TrackedApp {
+  id         String   @id @default(cuid())
+  partnerGid String   @unique
+  name       String
+  apiKey     String?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  installations ShopInstallation[]
+  events        AppEventLog[]
+  transactions  AppTransaction[]
+  syncCursor    SyncCursor?
+  dailyMetrics  AppMetricsDaily[]
+  emailLogs     EmailLog[]
+}
+
+// Current state per (app, shop) -- derived by replaying AppEventLog rows in
+// order. This is what "how many shops have app X installed right now" reads
+// from, instead of recomputing from the full event log every time.
+model ShopInstallation {
+  id             String    @id @default(cuid())
+  trackedAppId   String
+  trackedApp     TrackedApp @relation(fields: [trackedAppId], references: [id], onDelete: Cascade)
+  shopGid        String
+  shopDomain     String
+  shopName       String
+  shopAvatarUrl  String?
+  isActive       Boolean   @default(true)
+  installedAt    DateTime
+  uninstalledAt  DateTime?
+  reason         String?
+  description    String?
+  reasonCategory String?
+  // Populated by individual apps calling the /api/ingest-shop endpoint at
+  // install time (Partner API itself has no email field on Shop -- see
+  // CLAUDE.md). Null until an app reports it.
+  email          String?
+  // Current pricing plan, from the Partner API's activeSubscription(appId,
+  // shopId) query (2026-07+ only -- see CLAUDE.md). Null = free plan / no
+  // active paid subscription. One row per (app, shop) since a shop can only
+  // have one active subscription per app at a time -- no history needed here
+  // (AppTransaction is the historical ledger).
+  planHandle           String?
+  planAmount           Float?
+  planCurrencyCode     String?
+  billingPeriod        String?
+  trialEndsAt          DateTime?
+  subscriptionSyncedAt DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  @@unique([trackedAppId, shopGid])
+  @@index([trackedAppId, isActive])
+}
+
+enum AppEventType {
+  INSTALLED
+  UNINSTALLED
+  REACTIVATED
+  DEACTIVATED
+}
+
+// Full history, one row per Partner API event. ShopInstallation is derived
+// from this; this table is the source of truth / audit trail (and lets us
+// re-derive ShopInstallation from scratch if that logic ever needs to change).
+model AppEventLog {
+  id           String       @id @default(cuid())
+  trackedAppId String
+  trackedApp   TrackedApp   @relation(fields: [trackedAppId], references: [id], onDelete: Cascade)
+  shopGid      String
+  shopDomain   String
+  shopName     String
+  type         AppEventType
+  occurredAt   DateTime
+  reason       String?
+  description  String?
+  createdAt    DateTime     @default(now())
+
+  @@unique([trackedAppId, shopGid, type, occurredAt])
+  @@index([trackedAppId, occurredAt])
+}
+
+// One row per TrackedApp: how far the sync has gotten, so the next sync only
+// asks the Partner API for events after this point instead of re-fetching
+// full history every run.
+model SyncCursor {
+  id                String     @id @default(cuid())
+  trackedAppId      String     @unique
+  trackedApp        TrackedApp @relation(fields: [trackedAppId], references: [id], onDelete: Cascade)
+  lastOccurredAt    DateTime?
+  lastTransactionAt DateTime?
+  updatedAt         DateTime   @updatedAt
+}
+
+// Revenue ledger entries pulled from the Partner API's `transactions` query
+// (AppSubscriptionSale / AppOneTimeSale / AppUsageSale -- the ones with
+// actual Money amounts; see CLAUDE.md for the full Transaction type zoo).
+model AppTransaction {
+  id                   String     @id @default(cuid())
+  trackedAppId         String
+  trackedApp           TrackedApp @relation(fields: [trackedAppId], references: [id], onDelete: Cascade)
+  partnerTransactionId String     @unique
+  type                 String
+  shopGid              String?
+  shopDomain           String?
+  grossAmount          Float?
+  netAmount            Float?
+  currencyCode         String?
+  occurredAt           DateTime
+  createdAt            DateTime   @default(now())
+
+  @@index([trackedAppId, occurredAt])
+}
+
+// Daily rollup per app (the dashboard sums across apps for the portfolio
+// view -- cheap to do live since the app count is small).
+model AppMetricsDaily {
+  id             String     @id @default(cuid())
+  trackedAppId   String
+  trackedApp     TrackedApp @relation(fields: [trackedAppId], references: [id], onDelete: Cascade)
+  date           DateTime
+  activeInstalls Int
+  newInstalls    Int
+  uninstalls     Int
+  reinstalls     Int
+  createdAt      DateTime   @default(now())
+
+  @@unique([trackedAppId, date])
+  @@index([trackedAppId, date])
+}
+
+// Audit trail of every win-back/outreach email sent (or attempted) from this
+// tool. One row per send, regardless of success -- so "did we already email
+// this shop about this uninstall" can be answered without relying on
+// ShopInstallation (which only holds current state, not history).
+model EmailLog {
+  id                String   @id @default(cuid())
+  trackedAppId      String
+  trackedApp        TrackedApp @relation(fields: [trackedAppId], references: [id], onDelete: Cascade)
+  shopGid           String
+  shopDomain        String
+  recipient         String
+  subject           String
+  type              String   // e.g. "winback"
+  provider          String   // "resend" or "console" (no key configured)
+  providerMessageId String?
+  status            String   // "sent" | "logged" | "failed"
+  sentAt            DateTime @default(now())
+
+  @@index([trackedAppId, shopGid])
+}
+
+// This internal tool's own login (single shared password, see
+// app/lib/auth/session.server.ts) -- no per-user accounts yet. Singleton row
+// (id is always "singleton"); bootstrapped on first read from the
+// DASHBOARD_PASSWORD env var if the row doesn't exist yet, so existing
+// deployments keep working until the password is changed in the UI.
+model DashboardSettings {
+  id           String   @id @default("singleton")
+  passwordHash String
+  updatedAt    DateTime @updatedAt
+}
