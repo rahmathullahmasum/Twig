@@ -182,7 +182,7 @@ function SyncButton({ id }: { id: string }) {
       <input type="hidden" name="id" value={id} />
       <InlineStack gap="200">
         <Button submit size="slim" loading={fetcher.state !== "idle"}>
-          Sync now
+          Sync Now
         </Button>
       </InlineStack>
     </fetcher.Form>
