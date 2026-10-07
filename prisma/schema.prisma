@@ -165,13 +165,19 @@ model EmailLog {
   @@index([trackedAppId, shopGid])
 }
 
-// This internal tool's own login (single shared password, see
-// app/lib/auth/session.server.ts) -- no per-user accounts yet. Singleton row
-// (id is always "singleton"); bootstrapped on first read from the
-// DASHBOARD_PASSWORD env var if the row doesn't exist yet, so existing
-// deployments keep working until the password is changed in the UI.
-model DashboardSettings {
-  id           String   @id @default("singleton")
+// This internal tool's own login -- individual accounts (replaced the old
+// single-shared-password design). Self-service signup via /register, gated
+// to ALLOWED_EMAIL_DOMAIN (see app/lib/auth/session.server.ts) since this is
+// an internal company tool, not a public one.
+model User {
+  id        String   @id @default(cuid())
+  email     String   @unique
   passwordHash String
-  updatedAt    DateTime @updatedAt
+  // Forgot-password flow: sha256(token) + expiry, cleared once used or
+  // replaced by a newer request. The raw token only ever exists in the
+  // emailed link, never stored.
+  resetTokenHash      String?
+  resetTokenExpiresAt DateTime?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }

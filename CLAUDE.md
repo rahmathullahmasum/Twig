@@ -34,8 +34,10 @@ against the user's real production data.** Built:
   `app/lib/sync/metricsRollup.server.ts`: daily per-app rollup.
 - `pg-boss` worker: syncs every tracked app every 15 minutes.
 - Routes: `/login`, `/dashboard` (portfolio-wide, sums across apps), `/apps` (add a new
-  app to track + per-app quick stats + manual "Sync now"), `/apps/:id` (per-app detail:
-  shop list, uninstall reason breakdown).
+  app to track + per-app quick stats), `/apps/:id` (per-app detail: shop list, uninstall
+  reason breakdown), `/settings` (change password, **"Sync all apps now"** -- a manual
+  full refresh across every tracked app; see the 2026-10-07 note below for why the old
+  per-app "Sync now" button was removed in favor of this single one).
 - **Revenue tracking** (2026-10-04, same session as the email work below):
   `app/lib/sync/syncTransactions.server.ts` pulls `AppSubscriptionSale`/`AppOneTimeSale`/
   `AppUsageSale` via the Partner API's `transactions(appId: ...)` root query (needs the
@@ -316,12 +318,30 @@ since Partner API docs pages were incomplete/inconsistent when fetched. Findings
    "Current status" above for the result and what it changed.
 2. ~~Run the full verification suite~~ **Done** — clean after every change in this
    session, including the pagination and classifier fixes.
-3. **Exercise the actual `/apps` UI** (`npm run dev`, log in, add an app through the
-   form) — so far every live-data test went through a one-off script calling
-   `syncTrackedApp` directly, not the route/action. Confirm the form + "Sync now"
-   button work the same way.
-4. **Confirm `npm run worker` actually fires the 15-minute sweep** — built and
-   typechecks, but the scheduled job itself hasn't been watched run yet.
+3. ~~Exercise the actual `/apps` UI~~ **Done** — the "Add & sync" form and (now)
+   Settings' "Sync all apps now" button have both been live-tested through the real
+   route/action, not just by calling `syncTrackedApp` directly from a script.
+4. ~~Confirm `npm run worker` actually fires the 15-minute sweep~~ **Done** (2026-10-07)
+   — user was having to click "Sync now" manually because nothing kept the worker
+   process alive. Now runs persistently under **pm2** (see README's "Keeping the sync
+   worker running"); confirmed both `sweep.all-apps` (*/15 * * * *) and
+   `sweep.subscriptions` (0 3 * * *) registered in `pgboss.schedule` in Neon. On
+   Windows, pm2 can't run `npm run worker:start` directly in fork mode (`.cmd` shim +
+   `spawn EINVAL`) — start it against tsx's JS entrypoint instead:
+   `pm2 start node_modules/tsx/dist/cli.mjs --name portfolio-worker -- app/lib/jobs/worker.ts`,
+   with `NODE_ENV=production` set (dev mode's `pino-pretty` transport doesn't surface
+   logs reliably under pm2 on Windows; plain JSON logging does). `pm2-windows-startup`
+   is installed globally so pm2 itself relaunches on Windows login and resurrects the
+   saved process list (`pm2 save`) — don't forget to re-run `pm2 save` after changing
+   how the worker is started. **Later the same day**, the user found the pm2 console
+   window on Windows annoying enough to ask for it off entirely until they deploy to a
+   real (Linux) server -- the worker was stopped and removed from pm2 (`pm2 delete
+   portfolio-worker && pm2 save --force`), so **auto-sync is currently OFF**. Don't
+   re-enable it proactively; restart with the `pm2 start ...` line above (+ `pm2 save`)
+   only when asked. This is also why the old per-app "Sync now" button (in `/apps`) was
+   removed and replaced with a single "Sync all apps now" button in `/settings` --
+   without the background worker, manual re-sync needed to stay easy to reach, and one
+   button for every app beats clicking "Sync now" per app one at a time.
 5. Add the user's other apps (manually, via `/apps`, one ID at a time) as they're
    ready to be tracked.
 6. ~~Decide whether/how to close the "no email" gap~~ **Decided + built** (2026-10-04,
@@ -370,7 +390,12 @@ this.
 app/
   db.server.ts, root.tsx, entry.server.tsx, routes.ts   Same pattern as the sibling project.
   lib/
-    auth/session.server.ts        Single shared DASHBOARD_PASSWORD, cookie session.
+    auth/session.server.ts        Individual accounts (User model), cookie session, forgot/reset
+                                   password. Was a single shared DASHBOARD_PASSWORD
+                                   (DashboardSettings singleton row) until 2026-10-07, replaced
+                                   because more than one person needed their own login --
+                                   registration is self-service via /register but gated to
+                                   ALLOWED_EMAIL_DOMAIN since this is an internal company tool.
     partnerApi/
       client.server.ts            Auth + rate-limit-aware fetch wrapper.
       queries.server.ts           Events, transactions, AND activeSubscription queries.
@@ -392,12 +417,21 @@ app/
                                    sweep for subscriptions (O(active shops), kept off the
                                    15-min cycle on purpose).
   routes/
-    login.tsx, logout.tsx, _index.tsx
+    login.tsx, logout.tsx, register.tsx, forgot-password.tsx, reset-password.tsx, _index.tsx
+    settings.tsx          Change own password (requires current password), log out,
+                          "Sync all apps now" (manual full re-sync across every tracked
+                          app -- the only manual sync entry point since the per-app
+                          "Sync now" button was removed 2026-10-07). One account's own
+                          settings -- no admin/user-management UI exists.
+    users.tsx, users_.$id.tsx   Read-only list of every registered account + per-account
+                          info (joined date, password-last-changed). No edit/delete.
     dashboard.tsx         Portfolio-wide (sums AppMetricsDaily across all apps), date-range
                           filterable (7/30/90d via RangeFilter), delta badges vs. previous
                           period, revenue-by-currency card.
-    apps.tsx              Add a new tracked app; per-app quick stats + manual sync (now
-                          syncs both events and transactions).
+    apps.tsx              Add a new tracked app (runs an initial sync); per-app quick
+                          stats. No per-row sync button (removed 2026-10-07) -- manual
+                          re-sync is now "Sync all apps now" in /settings, one button
+                          for every tracked app instead of one per row.
     apps_.$id.tsx         Per-app detail: shop list (searchable + active/inactive filter,
                           client-side -- data volume is small, now shows email + plan
                           columns), uninstall reason breakdown (proportional bars +

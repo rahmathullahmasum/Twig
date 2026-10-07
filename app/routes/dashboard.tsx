@@ -8,6 +8,7 @@ import { requireAuth } from "../lib/auth/session.server";
 import { AppLayout } from "../components/AppLayout";
 import { RangeFilter } from "../components/RangeFilter";
 import { DeltaBadge } from "../components/DeltaBadge";
+import { ClientOnly } from "../components/ClientOnly";
 import db from "../db.server";
 
 const RANGE_VALUES = [7, 30, 90] as const;
@@ -219,14 +220,18 @@ export default function Dashboard() {
               </Text>
               {trend.length > 1 ? (
                 <div style={{ height: 240 }}>
-                  <LineChart
-                    data={[
-                      {
-                        name: "Active installs",
-                        data: trend.map(([date, v]) => ({ key: date, value: v.activeInstalls })),
-                      },
-                    ]}
-                  />
+                  <ClientOnly>
+                    {() => (
+                      <LineChart
+                        data={[
+                          {
+                            name: "Active installs",
+                            data: trend.map(([date, v]) => ({ key: date, value: v.activeInstalls })),
+                          },
+                        ]}
+                      />
+                    )}
+                  </ClientOnly>
                 </div>
               ) : (
                 <Text as="p" tone="subdued">
@@ -245,13 +250,17 @@ export default function Dashboard() {
               </Text>
               {trend.length > 1 ? (
                 <div style={{ height: 240 }}>
-                  <LineChart
-                    data={[
-                      { name: "New installs", data: trend.map(([date, v]) => ({ key: date, value: v.newInstalls })) },
-                      { name: "Uninstalls", data: trend.map(([date, v]) => ({ key: date, value: v.uninstalls })) },
-                      { name: "Reinstalls", data: trend.map(([date, v]) => ({ key: date, value: v.reinstalls })) },
-                    ]}
-                  />
+                  <ClientOnly>
+                    {() => (
+                      <LineChart
+                        data={[
+                          { name: "New installs", data: trend.map(([date, v]) => ({ key: date, value: v.newInstalls })) },
+                          { name: "Uninstalls", data: trend.map(([date, v]) => ({ key: date, value: v.uninstalls })) },
+                          { name: "Reinstalls", data: trend.map(([date, v]) => ({ key: date, value: v.reinstalls })) },
+                        ]}
+                      />
+                    )}
+                  </ClientOnly>
                 </div>
               ) : (
                 <Text as="p" tone="subdued">
@@ -271,7 +280,9 @@ export default function Dashboard() {
                 </Text>
                 {trend.length > 1 ? (
                   <div style={{ height: 240 }}>
-                    <LineChart data={perAppTrend.map((a) => ({ name: a.name, data: a.series }))} />
+                    <ClientOnly>
+                      {() => <LineChart data={perAppTrend.map((a) => ({ name: a.name, data: a.series }))} />}
+                    </ClientOnly>
                   </div>
                 ) : (
                   <Text as="p" tone="subdued">
@@ -291,12 +302,16 @@ export default function Dashboard() {
               </Text>
               {revenueTrend.length > 0 ? (
                 <div style={{ height: 240 }}>
-                  <LineChart
-                    data={revenueTrend.map((r) => ({
-                      name: r.currency === "unknown" ? "Unknown currency" : r.currency,
-                      data: r.series,
-                    }))}
-                  />
+                  <ClientOnly>
+                    {() => (
+                      <LineChart
+                        data={revenueTrend.map((r) => ({
+                          name: r.currency === "unknown" ? "Unknown currency" : r.currency,
+                          data: r.series,
+                        }))}
+                      />
+                    )}
+                  </ClientOnly>
                 </div>
               ) : (
                 <Text as="p" tone="subdued">

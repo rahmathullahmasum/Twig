@@ -10,7 +10,8 @@ needed in your individual apps for any of that. The one exception is shop email
 
 - React Router v7 + PostgreSQL/Prisma + `@shopify/polaris`/`polaris-viz` (same stack as
   the `Shopify Growth Intelligence` project, minus anything Shopify-embedded-app-specific
-  — this tool is just a plain internal web app, gated by a single shared password)
+  — this tool is just a plain internal web app with its own individual-account login,
+  gated to one email domain)
 - `pg-boss` background worker: syncs every tracked app from the Partner API on a
   15-minute schedule
 
@@ -23,18 +24,48 @@ needed in your individual apps for any of that. The one exception is shop email
 2. **Get your organization ID**: the number in the Partner Dashboard's URL
    (`partners.shopify.com/<this number>/...`).
 3. **Copy `.env.example` to `.env`** and fill in `DATABASE_URL`,
-   `PARTNER_API_ORGANIZATION_ID`, `PARTNER_API_ACCESS_TOKEN`, `DASHBOARD_PASSWORD`,
-   `SESSION_SECRET`, `INGEST_SECRET` (for shop email ingestion, see below).
+   `PARTNER_API_ORGANIZATION_ID`, `PARTNER_API_ACCESS_TOKEN`, `SESSION_SECRET`,
+   `ALLOWED_EMAIL_DOMAIN` (restricts who can self-register), `INGEST_SECRET` (for shop
+   email ingestion, see below).
 4. `npm install && npm run db:migrate`
-5. `npm run dev` (defaults to port 3100) — log in at `/login` with `DASHBOARD_PASSWORD`. Once
-   logged in, change it any time from **Settings** in the sidebar — after that, the `.env`
-   value is ignored (the current password lives in the `DashboardSettings` DB row, seeded
-   from `DASHBOARD_PASSWORD` the first time anyone logs in).
-6. `npm run worker` in a second terminal (background sync).
+5. `npm run dev` (defaults to port 3100) — go to `/register` and create your own account
+   (email must match `ALLOWED_EMAIL_DOMAIN` if set). Everyone who needs access registers
+   their own account the same way; "Forgot password?" on `/login` emails a reset link to
+   that account's own address (needs `RESEND_API_KEY`/`EMAIL_FROM` below to actually send,
+   otherwise it's logged to the console instead).
+6. The background worker (`npm run worker:start`, syncs every 15 min) runs persistently
+   under **pm2** instead of a terminal you have to keep open -- see "Keeping the sync
+   worker running" below. Without it, data only updates when you click "Sync all apps now"
+   in **Settings**.
 7. Go to **Apps**, add each app you want tracked: open it in the Partner Dashboard,
    copy the number from its URL (`partners.shopify.com/<org>/apps/<this number>/...`),
    paste it in with a display name. New apps you build later just get added the same
    way — no code changes.
+
+## Keeping the sync worker running
+
+The 15-minute auto-sync (and the daily subscription sweep) only happens while
+`app/lib/jobs/worker.ts` is running. It's managed by **pm2** so it survives closing the
+terminal and restarts automatically if it crashes:
+
+```
+pm2 list                        # check status (should show "portfolio-worker" as online)
+pm2 logs portfolio-worker       # tail its logs
+pm2 restart portfolio-worker    # after pulling code changes that touch app/lib/jobs or app/lib/sync
+```
+
+It was started with (on Windows, `npm run worker:start` directly doesn't work under pm2 --
+`.cmd` shims don't play well with pm2's fork mode, so it runs tsx's JS entrypoint instead):
+
+```
+NODE_ENV=production pm2 start node_modules/tsx/dist/cli.mjs --name portfolio-worker --cwd "<project path>" -- app/lib/jobs/worker.ts
+pm2 save
+```
+
+`pm2-windows-startup` (installed globally, `pm2-startup install`) registers pm2 itself to
+start on Windows login, which then resurrects whatever `pm2 save` last captured -- so the
+worker comes back up after a reboot too. If you ever reinstall or move the project, redo
+the `pm2 start` line above and run `pm2 save` again.
 
 ## Revenue tracking
 

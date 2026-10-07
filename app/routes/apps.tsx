@@ -1,19 +1,6 @@
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
 import { Link, useFetcher, useLoaderData } from "react-router";
-import {
-  AppProvider,
-  Layout,
-  Card,
-  Text,
-  BlockStack,
-  InlineStack,
-  Banner,
-  Button,
-  TextField,
-  FormLayout,
-  DataTable,
-  Badge,
-} from "@shopify/polaris";
+import { AppProvider, Layout, Card, Text, BlockStack, Banner, Button, TextField, FormLayout, DataTable, Badge } from "@shopify/polaris";
 import polarisTranslations from "@shopify/polaris/locales/en.json";
 import { useState } from "react";
 import { requireAuth } from "../lib/auth/session.server";
@@ -72,24 +59,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         ok: true,
         message: `Added "${name}", but the first sync failed: ${
           error instanceof Error ? error.message : String(error)
-        }. It'll retry on the next scheduled sync, or click "Sync now".`,
+        }. It'll retry on the next scheduled sync, or use "Sync all apps now" in Settings.`,
       };
-    }
-  }
-
-  if (intent === "sync") {
-    const id = String(formData.get("id"));
-    try {
-      const result = await syncTrackedApp(id);
-      const txnResult = await syncTrackedAppTransactions(id);
-      const subResult = await syncTrackedAppSubscriptions(id);
-      await computeAppMetricsForToday(id);
-      return {
-        ok: true,
-        message: `Synced: ${result.processed} event(s), ${txnResult.processed} transaction(s), ${subResult.checked} subscription(s) checked.`,
-      };
-    } catch (error) {
-      return { ok: false, message: error instanceof Error ? error.message : String(error) };
     }
   }
 
@@ -152,8 +123,8 @@ export default function Apps() {
                 </Text>
               ) : (
                 <DataTable
-                  columnContentTypes={["text", "numeric", "text", "text"]}
-                  headings={["App", "Active installs", "Last synced", ""]}
+                  columnContentTypes={["text", "numeric", "text"]}
+                  headings={["App", "Active installs", "Last synced"]}
                   rows={apps.map((app) => [
                     <Link key={app.id} to={`/apps/${app.id}`}>
                       {app.name}
@@ -162,7 +133,6 @@ export default function Apps() {
                       {String(app._count.installations)}
                     </Badge>,
                     formatRelativeTime(app.syncCursor?.lastOccurredAt),
-                    <SyncButton key={app.id} id={app.id} />,
                   ])}
                 />
               )}
@@ -171,20 +141,5 @@ export default function Apps() {
         </Layout>
       </AppLayout>
     </AppProvider>
-  );
-}
-
-function SyncButton({ id }: { id: string }) {
-  const fetcher = useFetcher();
-  return (
-    <fetcher.Form method="post">
-      <input type="hidden" name="intent" value="sync" />
-      <input type="hidden" name="id" value={id} />
-      <InlineStack gap="200">
-        <Button submit size="slim" loading={fetcher.state !== "idle"}>
-          Sync Now
-        </Button>
-      </InlineStack>
-    </fetcher.Form>
   );
 }

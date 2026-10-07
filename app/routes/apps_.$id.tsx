@@ -16,12 +16,14 @@ import {
   Button,
   Avatar,
   Banner,
+  Link,
 } from "@shopify/polaris";
 import { LineChart } from "@shopify/polaris-viz";
 import polarisTranslations from "@shopify/polaris/locales/en.json";
 import { requireAuth } from "../lib/auth/session.server";
 import { AppLayout } from "../components/AppLayout";
 import { ReasonBadge } from "../components/ReasonBadge";
+import { ClientOnly } from "../components/ClientOnly";
 import { formatRelativeTime } from "../lib/formatRelativeTime";
 import { sendWinbackEmail } from "../lib/email/sendWinbackEmail.server";
 import db from "../db.server";
@@ -204,7 +206,9 @@ export default function AppDetail() {
                 </Text>
                 {activeInstallsTrend.length > 1 ? (
                   <div style={{ height: 220 }}>
-                    <LineChart data={[{ name: "Active installs", data: activeInstallsTrend }]} />
+                    <ClientOnly>
+                      {() => <LineChart data={[{ name: "Active installs", data: activeInstallsTrend }]} />}
+                    </ClientOnly>
                   </div>
                 ) : (
                   <Text as="p" tone="subdued">
@@ -292,12 +296,16 @@ export default function AppDetail() {
                     </InlineStack>
                     {revenueTrend.length > 0 && (
                       <div style={{ height: 200 }}>
-                        <LineChart
-                          data={revenueTrend.map((r) => ({
-                            name: r.currency === "unknown" ? "Unknown currency" : r.currency,
-                            data: r.series,
-                          }))}
-                        />
+                        <ClientOnly>
+                          {() => (
+                            <LineChart
+                              data={revenueTrend.map((r) => ({
+                                name: r.currency === "unknown" ? "Unknown currency" : r.currency,
+                                data: r.series,
+                              }))}
+                            />
+                          )}
+                        </ClientOnly>
                       </div>
                     )}
                     <DataTable
@@ -361,13 +369,16 @@ export default function AppDetail() {
                   </Text>
                 ) : (
                   <DataTable
-                    columnContentTypes={["text", "text", "text", "text", "text", "text", "text", "text"]}
-                    headings={["Shop", "Email", "Plan", "Status", "Reason", "Installed", "Uninstalled", "Win-back"]}
+                    columnContentTypes={["text", "text", "text", "text", "text", "text", "text", "text", "text"]}
+                    headings={["Shop", "Store URL", "Email", "Plan", "Status", "Reason", "Installed", "Uninstalled", "Win-back"]}
                     rows={filtered.map((i) => [
                       <InlineStack key={i.id} gap="200" blockAlign="center" wrap={false}>
                         <Avatar source={i.shopAvatarUrl ?? undefined} name={i.shopName || i.shopDomain} size="sm" />
                         <Text as="span">{i.shopName || i.shopDomain}</Text>
                       </InlineStack>,
+                      <Link key={i.id} url={`https://${i.shopDomain}`} target="_blank">
+                        {i.shopDomain}
+                      </Link>,
                       i.email ?? "—",
                       i.isActive
                         ? !i.subscriptionSyncedAt

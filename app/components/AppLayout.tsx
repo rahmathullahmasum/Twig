@@ -168,9 +168,18 @@ export function AppLayout({ title, subtitle, primaryAction, apps = [], children 
         </BlockStack>
 
         <div style={{ marginTop: "auto", paddingTop: 20, borderTop: "1px solid var(--p-color-border)" }}>
-          <SidebarLink to="/settings" active={location.pathname === "/settings"} icon={<SettingsIcon />}>
-            Settings
-          </SidebarLink>
+          <BlockStack gap="100">
+            <SidebarLink
+              to="/users"
+              active={location.pathname === "/users" || location.pathname.startsWith("/users/")}
+              icon={<UsersIcon />}
+            >
+              Users
+            </SidebarLink>
+            <SidebarLink to="/settings" active={location.pathname === "/settings"} icon={<SettingsIcon />}>
+              Settings
+            </SidebarLink>
+          </BlockStack>
         </div>
       </div>
 
@@ -247,6 +256,17 @@ function AppsIcon() {
       <rect x="11" y="3" width="6" height="6" rx="1.3" fill="currentColor" />
       <rect x="3" y="11" width="6" height="6" rx="1.3" fill="currentColor" />
       <rect x="11" y="11" width="6" height="6" rx="1.3" fill="currentColor" />
+    </svg>
+  );
+}
+
+function UsersIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 20 20" fill="none" aria-hidden>
+      <circle cx="7.5" cy="6.5" r="2.5" stroke="currentColor" strokeWidth="1.5" />
+      <path d="M2.5 16c0-2.76 2.24-5 5-5s5 2.24 5 5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+      <circle cx="14" cy="7" r="2" stroke="currentColor" strokeWidth="1.5" />
+      <path d="M12.5 11.2c1.9.3 3.5 1.9 3.5 4.3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
     </svg>
   );
 }

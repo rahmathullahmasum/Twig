@@ -1,19 +1,55 @@
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
-import { Form, useActionData } from "react-router";
-import { AppProvider, Layout, Card, Text, BlockStack, FormLayout, TextField, Button, Banner } from "@shopify/polaris";
+import { Form, useActionData, useFetcher, useLoaderData } from "react-router";
+import { AppProvider, Layout, Card, Text, BlockStack, FormLayout, Button, Banner } from "@shopify/polaris";
 import polarisTranslations from "@shopify/polaris/locales/en.json";
 import { useState } from "react";
-import { requireAuth, changePassword } from "../lib/auth/session.server";
+import { requireAuth, changeUserPassword } from "../lib/auth/session.server";
 import { AppLayout } from "../components/AppLayout";
+import { PasswordField } from "../components/PasswordField";
+import db from "../db.server";
+import { syncTrackedApp } from "../lib/sync/syncApp.server";
+import { syncTrackedAppTransactions } from "../lib/sync/syncTransactions.server";
+import { syncTrackedAppSubscriptions } from "../lib/sync/syncSubscriptions.server";
+import { computeAppMetricsForToday } from "../lib/sync/metricsRollup.server";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
-  await requireAuth(request);
-  return null;
+  const userId = await requireAuth(request);
+  const user = await db.user.findUnique({ where: { id: userId }, select: { email: true } });
+  return { email: user?.email ?? "" };
 };
 
 export const action = async ({ request }: ActionFunctionArgs) => {
-  await requireAuth(request);
+  const userId = await requireAuth(request);
   const formData = await request.formData();
+  const intent = formData.get("intent");
+
+  if (intent === "sync-all") {
+    const apps = await db.trackedApp.findMany({ select: { id: true, name: true } });
+    if (apps.length === 0) {
+      return { ok: false, message: "No apps tracked yet -- add one from the Apps page first." };
+    }
+
+    const failures: string[] = [];
+    for (const app of apps) {
+      try {
+        await syncTrackedApp(app.id);
+        await syncTrackedAppTransactions(app.id);
+        await syncTrackedAppSubscriptions(app.id);
+        await computeAppMetricsForToday(app.id);
+      } catch (error) {
+        failures.push(`${app.name}: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
+
+    if (failures.length === 0) {
+      return { ok: true, message: `Synced all ${apps.length} app(s).` };
+    }
+    return {
+      ok: false,
+      message: `Synced ${apps.length - failures.length}/${apps.length} app(s). Failed: ${failures.join("; ")}`,
+    };
+  }
+
   const currentPassword = String(formData.get("currentPassword") || "");
   const newPassword = String(formData.get("newPassword") || "");
   const confirmPassword = String(formData.get("confirmPassword") || "");
@@ -25,7 +61,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     return { ok: false, message: "New password and confirmation don't match." };
   }
 
-  const changed = await changePassword(currentPassword, newPassword);
+  const changed = await changeUserPassword(userId, currentPassword, newPassword);
   if (!changed) {
     return { ok: false, message: "Current password is incorrect." };
   }
@@ -33,7 +69,9 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 };
 
 export default function Settings() {
+  const { email } = useLoaderData<typeof loader>();
   const actionData = useActionData<typeof action>();
+  const syncFetcher = useFetcher<typeof action>();
   const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
@@ -46,6 +84,30 @@ export default function Settings() {
             {actionData?.message && (
               <Banner tone={actionData.ok ? "success" : "critical"}>{actionData.message}</Banner>
             )}
+            {syncFetcher.data?.message && (
+              <Banner tone={syncFetcher.data.ok ? "success" : "critical"}>{syncFetcher.data.message}</Banner>
+            )}
+          </Layout.Section>
+
+          <Layout.Section>
+            <Card>
+              <BlockStack gap="300">
+                <Text as="h2" variant="headingMd">
+                  Data sync
+                </Text>
+                <Text as="p" tone="subdued">
+                  Pulls the latest installs, uninstalls, revenue, and subscription data for every
+                  tracked app from the Partner API. Runs automatically every 15 minutes in the
+                  background; use this to refresh on demand instead.
+                </Text>
+                <syncFetcher.Form method="post">
+                  <input type="hidden" name="intent" value="sync-all" />
+                  <Button submit loading={syncFetcher.state !== "idle"}>
+                    Sync all apps now
+                  </Button>
+                </syncFetcher.Form>
+              </BlockStack>
+            </Card>
           </Layout.Section>
 
           <Layout.Section>
@@ -55,31 +117,28 @@ export default function Settings() {
                   Change password
                 </Text>
                 <Text as="p" tone="subdued">
-                  This changes the single shared password used to log in to this dashboard.
+                  Logged in as {email}.
                 </Text>
                 <Form method="post">
                   <FormLayout>
-                    <TextField
+                    <PasswordField
                       label="Current password"
                       name="currentPassword"
-                      type="password"
                       value={currentPassword}
                       onChange={setCurrentPassword}
                       autoComplete="current-password"
                     />
-                    <TextField
+                    <PasswordField
                       label="New password"
                       name="newPassword"
-                      type="password"
                       value={newPassword}
                       onChange={setNewPassword}
                       autoComplete="new-password"
                       helpText="At least 8 characters."
                     />
-                    <TextField
+                    <PasswordField
                       label="Confirm new password"
                       name="confirmPassword"
-                      type="password"
                       value={confirmPassword}
                       onChange={setConfirmPassword}
                       autoComplete="new-password"
