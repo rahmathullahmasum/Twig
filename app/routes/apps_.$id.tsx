@@ -1,35 +1,17 @@
 import { useMemo, useState } from "react";
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
 import { useFetcher, useLoaderData } from "react-router";
-import {
-  AppProvider,
-  Layout,
-  Card,
-  Text,
-  BlockStack,
-  InlineStack,
-  DataTable,
-  Badge,
-  Grid,
-  TextField,
-  ButtonGroup,
-  Button,
-  Avatar,
-  Banner,
-  Link,
-} from "@shopify/polaris";
-import { LineChart } from "@shopify/polaris-viz";
-import polarisTranslations from "@shopify/polaris/locales/en.json";
-import { requireAuth } from "../lib/auth/session.server";
+import { requireUser } from "../lib/auth/session.server";
 import { AppLayout } from "../components/AppLayout";
-import { ReasonBadge } from "../components/ReasonBadge";
-import { ClientOnly } from "../components/ClientOnly";
+import { ReasonBadge, reasonColor } from "../components/ReasonBadge";
+import { translateReason } from "../lib/sync/classifyUninstallReason";
 import { formatRelativeTime } from "../lib/formatRelativeTime";
 import { sendWinbackEmail } from "../lib/email/sendWinbackEmail.server";
+import { Badge, Button, Avatar, AppBadge, Select, LineChart } from "../components/ui";
 import db from "../db.server";
 
 export const loader = async ({ request, params }: LoaderFunctionArgs) => {
-  await requireAuth(request);
+  const user = await requireUser(request);
 
   const [trackedApp, installations, reasonBreakdown, apps, revenueByCurrency, recentTransactions, allTransactions, dailyMetrics] =
     await Promise.all([
@@ -79,13 +61,12 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
   }
   const revenueTrend = [...revenueByDateByCurrency.entries()].map(([currency, byDateForCurrency]) => ({
     currency,
-    series: [...byDateForCurrency.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([key, value]) => ({ key, value })),
+    labels: [...byDateForCurrency.keys()].sort((a, b) => a.localeCompare(b)),
+    series: [...byDateForCurrency.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([, value]) => value),
   }));
 
-  const activeInstallsTrend = dailyMetrics.map((m) => ({
-    key: m.date.toISOString().slice(0, 10),
-    value: m.activeInstalls,
-  }));
+  const activeInstallsLabels = dailyMetrics.map((m) => m.date.toISOString().slice(0, 10));
+  const activeInstallsTrend = dailyMetrics.map((m) => m.activeInstalls);
 
   const lastWinbackByShopGid: Record<string, { status: string; sentAt: string }> = {};
   for (const [shopGid, log] of lastWinbackByShop) {
@@ -100,13 +81,15 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     revenueByCurrency,
     recentTransactions,
     revenueTrend,
+    activeInstallsLabels,
     activeInstallsTrend,
     lastWinbackByShopGid,
+    email: user.email,
   };
 };
 
 export const action = async ({ request }: ActionFunctionArgs) => {
-  await requireAuth(request);
+  await requireUser(request);
   const formData = await request.formData();
   const intent = formData.get("intent");
 
@@ -136,8 +119,10 @@ export default function AppDetail() {
     revenueByCurrency,
     recentTransactions,
     revenueTrend,
+    activeInstallsLabels,
     activeInstallsTrend,
     lastWinbackByShopGid,
+    email,
   } = useLoaderData<typeof loader>();
   const winbackFetcher = useFetcher<typeof action>();
   const active = installations.filter((i) => i.isActive);
@@ -148,274 +133,279 @@ export default function AppDetail() {
 
   const filtered = useMemo(() => {
     const term = search.trim().toLowerCase();
-    return installations.filter((i) => {
-      if (status === "active" && !i.isActive) return false;
-      if (status === "inactive" && i.isActive) return false;
-      if (term.length === 0) return true;
-      return i.shopName.toLowerCase().includes(term) || i.shopDomain.toLowerCase().includes(term);
-    });
+    return installations
+      .filter((i) => {
+        if (status === "active" && !i.isActive) return false;
+        if (status === "inactive" && i.isActive) return false;
+        if (term.length === 0) return true;
+        return i.shopName.toLowerCase().includes(term) || i.shopDomain.toLowerCase().includes(term);
+      })
+      .sort((a, b) => {
+        // Most recent activity first -- a shop's uninstall date if it has
+        // one, otherwise its install date -- so active and uninstalled
+        // shops interleave by date instead of clustering by status.
+        const dateA = new Date(a.uninstalledAt ?? a.installedAt).getTime();
+        const dateB = new Date(b.uninstalledAt ?? b.installedAt).getTime();
+        return dateB - dateA;
+      });
   }, [installations, search, status]);
 
   const sortedReasons = [...reasonBreakdown].sort((a, b) => b._count._all - a._count._all);
   const maxReasonCount = Math.max(1, ...sortedReasons.map((r) => r._count._all));
 
   return (
-    <AppProvider i18n={polarisTranslations}>
-      <AppLayout title={trackedApp.name} subtitle="Installed shops, uninstalls, and why they left" apps={apps}>
-        <Layout>
-          {winbackFetcher.data?.message && (
-            <Layout.Section>
-              <Banner tone={winbackFetcher.data.ok ? "success" : "warning"}>{winbackFetcher.data.message}</Banner>
-            </Layout.Section>
+    <AppLayout apps={apps} userEmail={email}>
+      <div>
+        <a href="/apps" className="btn btn-ghost btn-sm" style={{ marginLeft: -10 }}>
+          <svg className="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+            <path d="M15 18l-6-6 6-6" />
+          </svg>
+          All apps
+        </a>
+      </div>
+
+      <header className="page-head">
+        <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+          <AppBadge name={trackedApp.name} large />
+          <div>
+            <h1 className="h1">{trackedApp.name}</h1>
+            <p className="sub">Installed shops, uninstalls, and why they left</p>
+          </div>
+        </div>
+      </header>
+
+      {winbackFetcher.data?.message && (
+        <p className={winbackFetcher.data.ok ? "msg-ok" : "msg-err"}>{winbackFetcher.data.message}</p>
+      )}
+
+      <div className="stats">
+        <div className="card stat">
+          <span className="stat-label">Active installs</span>
+          <div className="stat-value num">{active.length}</div>
+        </div>
+        <div className="card stat">
+          <span className="stat-label">Uninstalled</span>
+          <div className="stat-value num">{inactive.length}</div>
+        </div>
+      </div>
+
+      <section className="card">
+        <div className="card-head">
+          <div>
+            <h2 className="card-title">Active installs over time</h2>
+          </div>
+        </div>
+        <div className="card-body">
+          {activeInstallsTrend.length > 1 ? (
+            <LineChart
+              series={[{ name: "Active installs", color: "#3E5BD6", values: activeInstallsTrend }]}
+              labels={activeInstallsLabels}
+              area
+              formatTooltip={(v) => Math.round(v).toLocaleString()}
+            />
+          ) : (
+            <p className="muted">Not enough history yet to chart a trend — check back after a few sync runs.</p>
           )}
+        </div>
+      </section>
 
-          <Layout.Section>
-            <Grid>
-              <Grid.Cell columnSpan={{ xs: 6, sm: 3, md: 3, lg: 3, xl: 3 }}>
-                <Card>
-                  <BlockStack gap="100">
-                    <Text as="span" tone="subdued">
-                      Active installs
-                    </Text>
-                    <Text as="p" variant="heading2xl">
-                      {active.length}
-                    </Text>
-                  </BlockStack>
-                </Card>
-              </Grid.Cell>
-              <Grid.Cell columnSpan={{ xs: 6, sm: 3, md: 3, lg: 3, xl: 3 }}>
-                <Card>
-                  <BlockStack gap="100">
-                    <Text as="span" tone="subdued">
-                      Uninstalled
-                    </Text>
-                    <Text as="p" variant="heading2xl">
-                      {inactive.length}
-                    </Text>
-                  </BlockStack>
-                </Card>
-              </Grid.Cell>
-            </Grid>
-          </Layout.Section>
-
-          <Layout.Section>
-            <Card>
-              <BlockStack gap="300">
-                <Text as="h2" variant="headingMd">
-                  Active installs over time
-                </Text>
-                {activeInstallsTrend.length > 1 ? (
-                  <div style={{ height: 220 }}>
-                    <ClientOnly>
-                      {() => <LineChart data={[{ name: "Active installs", data: activeInstallsTrend }]} />}
-                    </ClientOnly>
+      {sortedReasons.length > 0 && (
+        <section className="card">
+          <div className="card-head">
+            <div>
+              <h2 className="card-title">Why shops uninstalled</h2>
+            </div>
+          </div>
+          <div className="card-body" style={{ paddingTop: 10 }}>
+            {sortedReasons.map((r) => {
+              const pct = (r._count._all / maxReasonCount) * 100;
+              return (
+                <div className="reason-row" key={r.reasonCategory}>
+                  <span>
+                    <ReasonBadge category={r.reasonCategory} />
+                  </span>
+                  <div className="bar-track">
+                    <div className="bar-fill" style={{ width: `${pct}%`, background: reasonColor(r.reasonCategory) }} />
                   </div>
-                ) : (
-                  <Text as="p" tone="subdued">
-                    Not enough history yet to chart a trend — check back after a few sync runs.
-                  </Text>
-                )}
-              </BlockStack>
-            </Card>
-          </Layout.Section>
+                  <span className="num" style={{ textAlign: "right", fontSize: 12.5 }}>
+                    <span style={{ fontWeight: 600 }}>{r._count._all}</span>
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        </section>
+      )}
 
-          {sortedReasons.length > 0 && (
-            <Layout.Section>
-              <Card>
-                <BlockStack gap="300">
-                  <Text as="h2" variant="headingMd">
-                    Why shops uninstalled
-                  </Text>
-                  <BlockStack gap="300">
-                    {sortedReasons.map((r) => {
-                      const pct = Math.round((r._count._all / maxReasonCount) * 100);
-                      return (
-                        <BlockStack gap="100" key={r.reasonCategory}>
-                          <InlineStack align="space-between" blockAlign="center">
-                            <ReasonBadge category={r.reasonCategory} />
-                            <Text as="span" tone="subdued">
-                              {r._count._all}
-                            </Text>
-                          </InlineStack>
-                          <div
-                            style={{
-                              height: 8,
-                              width: "100%",
-                              background: "var(--p-color-bg-surface-tertiary)",
-                              borderRadius: 4,
-                              overflow: "hidden",
-                            }}
-                          >
-                            <div
-                              style={{
-                                height: "100%",
-                                width: `${pct}%`,
-                                background: "var(--p-color-bg-fill-emphasis)",
-                                borderRadius: 4,
-                              }}
-                            />
-                          </div>
-                        </BlockStack>
-                      );
-                    })}
-                  </BlockStack>
-                </BlockStack>
-              </Card>
-            </Layout.Section>
-          )}
-
-          <Layout.Section>
-            <Card>
-              <BlockStack gap="300">
-                <Text as="h2" variant="headingMd">
-                  Revenue
-                </Text>
-                {revenueByCurrency.length === 0 ? (
-                  <Text as="p" tone="subdued">
-                    No revenue recorded yet for this app.
-                  </Text>
-                ) : (
-                  <>
-                    <InlineStack gap="400">
-                      {revenueByCurrency.map((r) => (
-                        <BlockStack gap="100" key={r.currencyCode}>
-                          <Text as="span" tone="subdued">
-                            Gross revenue ({r.currencyCode ?? "unknown currency"})
-                          </Text>
-                          <Text as="p" variant="headingLg">
-                            {(r._sum.grossAmount ?? 0).toLocaleString(undefined, {
-                              style: r.currencyCode ? "currency" : "decimal",
-                              currency: r.currencyCode ?? undefined,
-                            })}
-                          </Text>
-                          <Text as="span" tone="subdued">
-                            {r._count._all} transaction(s)
-                          </Text>
-                        </BlockStack>
-                      ))}
-                    </InlineStack>
-                    {revenueTrend.length > 0 && (
-                      <div style={{ height: 200 }}>
-                        <ClientOnly>
-                          {() => (
-                            <LineChart
-                              data={revenueTrend.map((r) => ({
-                                name: r.currency === "unknown" ? "Unknown currency" : r.currency,
-                                data: r.series,
-                              }))}
-                            />
-                          )}
-                        </ClientOnly>
-                      </div>
-                    )}
-                    <DataTable
-                      columnContentTypes={["text", "text", "numeric", "text"]}
-                      headings={["Type", "Shop", "Gross amount", "Date"]}
-                      rows={recentTransactions.map((t) => [
-                        t.type.replace(/^App/, "").replace(/Sale$/, ""),
-                        t.shopDomain ?? "—",
-                        t.grossAmount !== null
-                          ? t.grossAmount.toLocaleString(undefined, {
-                              style: "currency",
-                              currency: t.currencyCode ?? "USD",
-                            })
-                          : "—",
-                        new Date(t.occurredAt).toLocaleDateString(),
-                      ])}
-                    />
-                  </>
-                )}
-              </BlockStack>
-            </Card>
-          </Layout.Section>
-
-          <Layout.Section>
-            <Card>
-              <BlockStack gap="300">
-                <InlineStack align="space-between" blockAlign="center" wrap>
-                  <Text as="h2" variant="headingMd">
-                    Shops ({filtered.length})
-                  </Text>
-                  <InlineStack gap="300" blockAlign="center">
-                    <div style={{ minWidth: 220 }}>
-                      <TextField
-                        label=""
-                        labelHidden
-                        placeholder="Search by shop name or domain"
-                        value={search}
-                        onChange={setSearch}
-                        autoComplete="off"
-                        clearButton
-                        onClearButtonClick={() => setSearch("")}
-                      />
+      <section className="card">
+        <div className="card-head">
+          <div>
+            <h2 className="card-title">Revenue</h2>
+          </div>
+        </div>
+        <div className="card-body">
+          {revenueByCurrency.length === 0 ? (
+            <p className="muted">No revenue recorded yet for this app.</p>
+          ) : (
+            <>
+              <div style={{ display: "flex", gap: 40, flexWrap: "wrap", marginBottom: 16 }}>
+                {revenueByCurrency.map((r) => (
+                  <div key={r.currencyCode}>
+                    <div className="stat-label">Gross revenue ({r.currencyCode ?? "unknown currency"})</div>
+                    <div className="stat-value" style={{ fontSize: 22, marginTop: 4 }}>
+                      {(r._sum.grossAmount ?? 0).toLocaleString(undefined, {
+                        style: r.currencyCode ? "currency" : "decimal",
+                        currency: r.currencyCode ?? undefined,
+                      })}
                     </div>
-                    <ButtonGroup variant="segmented">
-                      <Button pressed={status === "all"} onClick={() => setStatus("all")}>
-                        All
-                      </Button>
-                      <Button pressed={status === "active"} onClick={() => setStatus("active")}>
-                        Active
-                      </Button>
-                      <Button pressed={status === "inactive"} onClick={() => setStatus("inactive")}>
-                        Uninstalled
-                      </Button>
-                    </ButtonGroup>
-                  </InlineStack>
-                </InlineStack>
+                    <div className="muted" style={{ fontSize: 12, marginTop: 2 }}>
+                      {r._count._all} transaction(s)
+                    </div>
+                  </div>
+                ))}
+              </div>
+              {revenueTrend.length > 0 && (
+                <LineChart
+                  series={revenueTrend.map((r, i) => ({
+                    name: r.currency === "unknown" ? "Unknown currency" : r.currency,
+                    color: ["#3E5BD6", "#E0702A", "#0F9D86", "#8B4FC9"][i % 4],
+                    values: r.series,
+                  }))}
+                  labels={revenueTrend[0]?.labels ?? []}
+                  small
+                  area
+                  formatValue={(v) => `$${Math.round(v)}`}
+                  formatTooltip={(v) => v.toLocaleString(undefined, { style: "currency", currency: "USD" })}
+                />
+              )}
+              <div className="card-split" style={{ marginTop: 16 }}>
+                <div className="tscroll">
+                  <div className="thead g-txn">
+                    <span>Type</span>
+                    <span>Shop</span>
+                    <span className="t-right">Gross amount</span>
+                    <span>Date</span>
+                  </div>
+                  {recentTransactions.map((t) => (
+                    <div key={t.id} className="trow g-txn" style={{ minHeight: 44 }}>
+                      <span>
+                        <Badge tone="neutral">{t.type.replace(/^App/, "").replace(/Sale$/, "")}</Badge>
+                      </span>
+                      <span className="truncate">{t.shopDomain ?? "—"}</span>
+                      <span className="num t-right" style={{ fontWeight: 500 }}>
+                        {t.grossAmount !== null
+                          ? t.grossAmount.toLocaleString(undefined, { style: "currency", currency: t.currencyCode ?? "USD" })
+                          : "—"}
+                      </span>
+                      <span className="muted num">{new Date(t.occurredAt).toLocaleDateString()}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </>
+          )}
+        </div>
+      </section>
 
-                {filtered.length === 0 ? (
-                  <Text as="p" tone="subdued">
-                    No shops match this filter.
-                  </Text>
-                ) : (
-                  <DataTable
-                    columnContentTypes={["text", "text", "text", "text", "text", "text", "text", "text", "text"]}
-                    headings={["Shop", "Store URL", "Email", "Plan", "Status", "Reason", "Installed", "Uninstalled", "Win-back"]}
-                    rows={filtered.map((i) => [
-                      <InlineStack key={i.id} gap="200" blockAlign="center" wrap={false}>
-                        <Avatar source={i.shopAvatarUrl ?? undefined} name={i.shopName || i.shopDomain} size="sm" />
-                        <Text as="span">{i.shopName || i.shopDomain}</Text>
-                      </InlineStack>,
-                      <Link key={i.id} url={`https://${i.shopDomain}`} target="_blank">
-                        {i.shopDomain}
-                      </Link>,
-                      i.email ?? "—",
-                      i.isActive
-                        ? !i.subscriptionSyncedAt
-                          ? "Not checked yet"
-                          : i.planHandle
-                            ? `${i.planHandle}${
-                                i.planAmount
-                                  ? ` (${i.planAmount.toLocaleString(undefined, { style: "currency", currency: i.planCurrencyCode ?? "USD" })})`
-                                  : ""
-                              }`
-                            : "Free"
-                        : "—",
-                      <Badge key={i.id} tone={i.isActive ? "success" : "critical"}>
-                        {i.isActive ? "Active" : "Uninstalled"}
-                      </Badge>,
-                      i.isActive ? "—" : <ReasonBadge key={i.id} category={i.reasonCategory} />,
-                      formatRelativeTime(i.installedAt),
-                      i.uninstalledAt ? formatRelativeTime(i.uninstalledAt) : "—",
-                      i.isActive ? (
-                        "—"
-                      ) : (
-                        <WinbackCell
-                          key={i.id}
-                          shopInstallationId={i.id}
-                          hasEmail={Boolean(i.email)}
-                          lastSent={lastWinbackByShopGid[i.shopGid]}
-                        />
-                      ),
-                    ])}
-                  />
-                )}
-              </BlockStack>
-            </Card>
-          </Layout.Section>
-        </Layout>
-      </AppLayout>
-    </AppProvider>
+      <section className="card">
+        <div className="card-head">
+          <div>
+            <h2 className="card-title">Shops</h2>
+            <p className="card-meta">Showing {filtered.length} of {installations.length} shops</p>
+          </div>
+        </div>
+        <div className="toolbar">
+          <div className="input-icon" style={{ flex: "1 1 280px", maxWidth: 360 }}>
+            <svg className="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden>
+              <circle cx="11" cy="11" r="7" />
+              <path d="M20 20l-3.5-3.5" />
+            </svg>
+            <label htmlFor="shop-search" style={{ position: "absolute", left: -9999 }}>
+              Search shops
+            </label>
+            <input
+              id="shop-search"
+              className="input"
+              type="search"
+              placeholder="Search by shop name or domain"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+            />
+          </div>
+          <Select
+            ariaLabel="Status"
+            value={status}
+            onChange={(value) => setStatus(value as StatusFilter)}
+            style={{ width: 180 }}
+            options={[
+              { label: "All shops", value: "all" },
+              { label: "Active only", value: "active" },
+              { label: "Uninstalled only", value: "inactive" },
+            ]}
+          />
+        </div>
+
+        {filtered.length === 0 ? (
+          <div className="empty">No shops match this filter.</div>
+        ) : (
+          <div className="tscroll">
+            <div className="thead g-shops">
+              <span>Shop</span>
+              <span>Store URL</span>
+              <span>Email</span>
+              <span>Plan</span>
+              <span>Status</span>
+              <span>Uninstall reason</span>
+              <span>What they said</span>
+              <span>Installed</span>
+              <span>Uninstalled</span>
+              <span></span>
+            </div>
+            {filtered.map((i) => (
+              <div key={i.id} className="trow g-shops">
+                <div className="cell-shop">
+                  <Avatar name={i.shopName || i.shopDomain} imageUrl={i.shopAvatarUrl} />
+                  <span className="truncate" style={{ fontWeight: 500 }}>
+                    {i.shopName || i.shopDomain}
+                  </span>
+                </div>
+                <a className="truncate mono" href={`https://${i.shopDomain}`} target="_blank" rel="noopener noreferrer">
+                  {i.shopDomain}
+                </a>
+                <span className="truncate muted">{i.email ?? "—"}</span>
+                <span>
+                  {i.isActive
+                    ? !i.subscriptionSyncedAt
+                      ? "Not checked yet"
+                      : i.planHandle
+                        ? `${i.planHandle}${
+                            i.planAmount
+                              ? ` (${i.planAmount.toLocaleString(undefined, { style: "currency", currency: i.planCurrencyCode ?? "USD" })})`
+                              : ""
+                          }`
+                        : "Free"
+                    : "—"}
+                </span>
+                <span>
+                  <Badge tone={i.isActive ? "success" : "critical"}>{i.isActive ? "Active" : "Uninstalled"}</Badge>
+                </span>
+                <span>{i.isActive ? <span className="muted">—</span> : <ReasonBadge category={i.reasonCategory} />}</span>
+                <span className="clamp" style={{ fontSize: 12.5 }}>
+                  {i.isActive ? "—" : i.description || translateReason(i.reason) || "—"}
+                </span>
+                <span className="muted num">{formatRelativeTime(i.installedAt)}</span>
+                <span className="muted num">{i.uninstalledAt ? formatRelativeTime(i.uninstalledAt) : "—"}</span>
+                <span style={{ justifySelf: "end" }}>
+                  {!i.isActive && (
+                    <WinbackCell shopInstallationId={i.id} hasEmail={Boolean(i.email)} lastSent={lastWinbackByShopGid[i.shopGid]} />
+                  )}
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
+    </AppLayout>
   );
 }
 
@@ -431,27 +421,19 @@ function WinbackCell({
   const fetcher = useFetcher();
 
   if (!hasEmail) {
-    return (
-      <Text as="span" tone="subdued">
-        No email on file
-      </Text>
-    );
+    return <span className="muted">No email on file</span>;
   }
 
   return (
-    <BlockStack gap="100">
-      {lastSent && (
-        <Text as="span" tone="subdued">
-          Last sent {formatRelativeTime(lastSent.sentAt)}
-        </Text>
-      )}
+    <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 4 }}>
+      {lastSent && <span className="muted" style={{ fontSize: 11.5 }}>Last sent {formatRelativeTime(lastSent.sentAt)}</span>}
       <fetcher.Form method="post">
         <input type="hidden" name="intent" value="send-winback" />
         <input type="hidden" name="shopInstallationId" value={shopInstallationId} />
-        <Button submit size="slim" loading={fetcher.state !== "idle"}>
-          {lastSent ? "Send again" : "Send win-back"}
+        <Button type="submit" variant="secondary" size="sm" disabled={fetcher.state !== "idle"}>
+          {lastSent ? "Send again" : "Send win-back email"}
         </Button>
       </fetcher.Form>
-    </BlockStack>
+    </div>
   );
 }

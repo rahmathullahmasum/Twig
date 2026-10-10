@@ -8,10 +8,10 @@ needed in your individual apps for any of that. The one exception is shop email
 
 ## Stack
 
-- React Router v7 + PostgreSQL/Prisma + `@shopify/polaris`/`polaris-viz` (same stack as
-  the `Shopify Growth Intelligence` project, minus anything Shopify-embedded-app-specific
+- React Router v7 + PostgreSQL/Prisma, with a from-scratch custom UI (plain CSS in
+  `app/styles/app.css` + components in `app/components/ui.tsx` -- no component library)
   — this tool is just a plain internal web app with its own individual-account login,
-  gated to one email domain)
+  gated to one email domain
 - `pg-boss` background worker: syncs every tracked app from the Partner API on a
   15-minute schedule
 

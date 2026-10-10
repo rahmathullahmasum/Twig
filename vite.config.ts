@@ -7,7 +7,4 @@ export default defineConfig({
     port: Number(process.env.PORT || 3100),
   },
   plugins: [reactRouter(), tsconfigPaths()],
-  optimizeDeps: {
-    include: ["@shopify/polaris", "@shopify/polaris-viz"],
-  },
 });

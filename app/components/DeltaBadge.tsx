@@ -1,13 +1,13 @@
-import { Badge } from "@shopify/polaris";
+import { Badge } from "./ui";
 
 export function DeltaBadge({ current, previous }: { current: number; previous: number }) {
   if (previous === 0) {
-    if (current === 0) return <Badge tone="info">Flat</Badge>;
+    if (current === 0) return <Badge tone="neutral">Flat</Badge>;
     return <Badge tone="success">New</Badge>;
   }
 
   const deltaPct = Math.round(((current - previous) / previous) * 100);
-  if (deltaPct === 0) return <Badge tone="info">Flat</Badge>;
+  if (deltaPct === 0) return <Badge tone="neutral">Flat</Badge>;
 
   return (
     <Badge tone={deltaPct > 0 ? "success" : "critical"}>

@@ -25,8 +25,6 @@
     "@react-router/fs-routes": "7.18.2",
     "@react-router/node": "7.18.2",
     "@react-router/serve": "7.18.2",
-    "@shopify/polaris": "^13.9.0",
-    "@shopify/polaris-viz": "^16.16.0",
     "dotenv": "^16.4.7",
     "pg-boss": "^10.1.5",
     "pino": "^9.6.0",

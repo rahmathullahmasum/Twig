@@ -1,11 +1,9 @@
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
 import { Form, useActionData, useFetcher, useLoaderData } from "react-router";
-import { AppProvider, Layout, Card, Text, BlockStack, FormLayout, Button, Banner } from "@shopify/polaris";
-import polarisTranslations from "@shopify/polaris/locales/en.json";
 import { useState } from "react";
-import { requireAuth, changeUserPassword } from "../lib/auth/session.server";
+import { requireAuth, requireUser, changeUserPassword } from "../lib/auth/session.server";
 import { AppLayout } from "../components/AppLayout";
-import { PasswordField } from "../components/PasswordField";
+import { Button, PasswordField } from "../components/ui";
 import db from "../db.server";
 import { syncTrackedApp } from "../lib/sync/syncApp.server";
 import { syncTrackedAppTransactions } from "../lib/sync/syncTransactions.server";
@@ -13,9 +11,9 @@ import { syncTrackedAppSubscriptions } from "../lib/sync/syncSubscriptions.serve
 import { computeAppMetricsForToday } from "../lib/sync/metricsRollup.server";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
-  const userId = await requireAuth(request);
-  const user = await db.user.findUnique({ where: { id: userId }, select: { email: true } });
-  return { email: user?.email ?? "" };
+  const user = await requireUser(request);
+  const apps = await db.trackedApp.findMany({ orderBy: { createdAt: "asc" }, select: { id: true, name: true } });
+  return { email: user.email, apps };
 };
 
 export const action = async ({ request }: ActionFunctionArgs) => {
@@ -69,7 +67,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 };
 
 export default function Settings() {
-  const { email } = useLoaderData<typeof loader>();
+  const { email, apps } = useLoaderData<typeof loader>();
   const actionData = useActionData<typeof action>();
   const syncFetcher = useFetcher<typeof action>();
   const [currentPassword, setCurrentPassword] = useState("");
@@ -77,97 +75,105 @@ export default function Settings() {
   const [confirmPassword, setConfirmPassword] = useState("");
 
   return (
-    <AppProvider i18n={polarisTranslations}>
-      <AppLayout title="Settings">
-        <Layout>
-          <Layout.Section>
-            {actionData?.message && (
-              <Banner tone={actionData.ok ? "success" : "critical"}>{actionData.message}</Banner>
-            )}
-            {syncFetcher.data?.message && (
-              <Banner tone={syncFetcher.data.ok ? "success" : "critical"}>{syncFetcher.data.message}</Banner>
-            )}
-          </Layout.Section>
+    <AppLayout apps={apps} userEmail={email}>
+      <header className="page-head">
+        <div>
+          <h1 className="h1">Settings</h1>
+          <p className="sub">Workspace data sync and your account.</p>
+        </div>
+      </header>
 
-          <Layout.Section>
-            <Card>
-              <BlockStack gap="300">
-                <Text as="h2" variant="headingMd">
-                  Data sync
-                </Text>
-                <Text as="p" tone="subdued">
+      <div className="settings-grid">
+        <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+          <section className="card">
+            <div className="card-head">
+              <div>
+                <h2 className="card-title">Data sync</h2>
+                <p className="card-meta">
                   Pulls the latest installs, uninstalls, revenue, and subscription data for every
                   tracked app from the Partner API. Runs automatically every 15 minutes in the
                   background; use this to refresh on demand instead.
-                </Text>
-                <syncFetcher.Form method="post">
-                  <input type="hidden" name="intent" value="sync-all" />
-                  <Button submit loading={syncFetcher.state !== "idle"}>
-                    Sync all apps now
-                  </Button>
-                </syncFetcher.Form>
-              </BlockStack>
-            </Card>
-          </Layout.Section>
+                </p>
+              </div>
+            </div>
+            <div className="card-body" style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 12 }}>
+              <syncFetcher.Form method="post">
+                <input type="hidden" name="intent" value="sync-all" />
+                <Button type="submit" variant="primary" disabled={syncFetcher.state !== "idle"}>
+                  {syncFetcher.state !== "idle" ? "Syncing…" : "Sync all apps now"}
+                </Button>
+              </syncFetcher.Form>
+              {syncFetcher.data?.message && (
+                <span className={syncFetcher.data.ok ? "msg-ok" : "msg-err"}>{syncFetcher.data.message}</span>
+              )}
+            </div>
+          </section>
 
-          <Layout.Section>
-            <Card>
-              <BlockStack gap="300">
-                <Text as="h2" variant="headingMd">
-                  Change password
-                </Text>
-                <Text as="p" tone="subdued">
-                  Logged in as {email}.
-                </Text>
-                <Form method="post">
-                  <FormLayout>
-                    <PasswordField
-                      label="Current password"
-                      name="currentPassword"
-                      value={currentPassword}
-                      onChange={setCurrentPassword}
-                      autoComplete="current-password"
-                    />
-                    <PasswordField
-                      label="New password"
-                      name="newPassword"
-                      value={newPassword}
-                      onChange={setNewPassword}
-                      autoComplete="new-password"
-                      helpText="At least 8 characters."
-                    />
-                    <PasswordField
-                      label="Confirm new password"
-                      name="confirmPassword"
-                      value={confirmPassword}
-                      onChange={setConfirmPassword}
-                      autoComplete="new-password"
-                    />
-                    <Button submit variant="primary">
-                      Change password
-                    </Button>
-                  </FormLayout>
-                </Form>
-              </BlockStack>
-            </Card>
-          </Layout.Section>
+          <section className="card">
+            <div className="card-head">
+              <div>
+                <h2 className="card-title">Session</h2>
+                <p className="card-meta">Signed in as {email}</p>
+              </div>
+            </div>
+            <div className="card-body">
+              <Form method="post" action="/logout">
+                <Button type="submit" variant="secondary">
+                  Log out
+                </Button>
+              </Form>
+            </div>
+          </section>
+        </div>
 
-          <Layout.Section>
-            <Card>
-              <BlockStack gap="300">
-                <Text as="h2" variant="headingMd">
-                  Account
-                </Text>
-                <Form method="post" action="/logout">
-                  <Button submit tone="critical">
-                    Log out
+        <section className="card">
+          <div className="card-head">
+            <div>
+              <h2 className="card-title">Change password</h2>
+              <p className="card-meta">At least 8 characters.</p>
+            </div>
+          </div>
+          <div className="card-body" style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+            {actionData?.message && (
+              <span className={actionData.ok ? "msg-ok" : "msg-err"}>{actionData.message}</span>
+            )}
+            <Form method="post">
+              <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+                <PasswordField
+                  id="pw-cur"
+                  label="Current password"
+                  name="currentPassword"
+                  value={currentPassword}
+                  onChange={setCurrentPassword}
+                  autoComplete="current-password"
+                />
+                <PasswordField
+                  id="pw-new"
+                  label="New password"
+                  name="newPassword"
+                  value={newPassword}
+                  onChange={setNewPassword}
+                  autoComplete="new-password"
+                  helpText="At least 8 characters."
+                />
+                <PasswordField
+                  id="pw-conf"
+                  label="Confirm new password"
+                  name="confirmPassword"
+                  value={confirmPassword}
+                  onChange={setConfirmPassword}
+                  autoComplete="new-password"
+                />
+                <div>
+                  <Button type="submit" variant="primary">
+                    Update password
                   </Button>
-                </Form>
-              </BlockStack>
-            </Card>
-          </Layout.Section>
-        </Layout>
-      </AppLayout>
-    </AppProvider>
+                </div>
+              </div>
+            </Form>
+          </div>
+        </section>
+      </div>
+    </AppLayout>
   );
 }

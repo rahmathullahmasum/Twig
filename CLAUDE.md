@@ -25,8 +25,10 @@ one-time addition to each individual app (see "Shop email ingestion" below).
 
 **Built, verified clean (`tsc`/`eslint`/build), AND confirmed working end-to-end
 against the user's real production data.** Built:
-- Full project (React Router v7 + Prisma/Postgres + Polaris), password-gated internal
-  tool at `/login`.
+- Full project (React Router v7 + Prisma/Postgres), password-gated internal tool at
+  `/login`. **UI is a from-scratch custom design system as of 2026-10-09** (see
+  "UI redesign" below) -- `@shopify/polaris`/`@shopify/polaris-viz` were fully removed,
+  not just restyled.
 - Partner API client (`app/lib/partnerApi/client.server.ts`) with auth + backoff.
 - Event-sync pipeline (`app/lib/sync/syncApp.server.ts`): pulls `RELATIONSHIP_INSTALLED`
   /`_UNINSTALLED`/`_REACTIVATED`/`_DEACTIVATED` events per tracked app, derives current
@@ -247,6 +249,38 @@ since Partner API docs pages were incomplete/inconsistent when fetched. Findings
   a single portfolio-wide number, convert currencies explicitly first (with real
   exchange rates) -- don't just sum `grossAmount` across rows without checking
   `currencyCode` first.
+- **UI redesign (2026-10-09): Polaris fully removed, replaced with a from-scratch
+  custom design system.** The user asked Claude (on claude.ai, via its Design/canvas
+  Artifact type) to design a visual concept for this dashboard, gave it a detailed brief
+  describing every real page/section, then handed the published Artifact's link back
+  here. The design was read directly (`Artifact` tool: list `scope:"files"` on a Design
+  canvas returns `project/canvas.json` + one `project/<Name>.dc.html` per artboard --
+  this one had `Main.dc.html`, a full interactive prototype, and `Tokens.dc.html`, the
+  design-system reference sheet) and re-implemented pixel-for-pixel as real React
+  components -- not just re-themed Polaris, a full swap. Source of truth for the look:
+  `app/styles/app.css` (plain CSS, class names taken straight from the prototype:
+  `.shell`, `.sidebar`, `.nav-link`, `.card`, `.stat`, `.badge`/`.b-*`, `.btn`/`.btn-*`,
+  `.input`/`.select`, `.thead`/`.trow`/`.g-*` grids, `.chart*`, etc.) plus
+  `app/components/ui.tsx` (the interactive primitives). Key values: primary `#3E5BD6`
+  (indigo), 7 semantic badge tones (success/warning/critical/neutral/brand/purple/teal),
+  a 6-color chart palette (`#3E5BD6 #E0702A #0F9D86 #8B4FC9 #C23A7A #8F7400`), Geist/Geist
+  Mono fonts (Google Fonts link in `root.tsx`). The charts are a from-scratch SVG
+  line/area chart with a hover tooltip (`LineChart` in `ui.tsx`) reimplementing the
+  prototype's vanilla-JS chart math (600×200 viewBox, min/max padding, hover-fraction →
+  nearest-index) in React state -- it touches no browser globals at render time, so (see
+  below) it needed no SSR workaround, unlike the old polaris-viz one. `requireAuth`
+  gained a sibling `requireUser()` (returns `{id, email}`) used by every loader that
+  renders the sidebar, so the new account-footer (shows the logged-in user's email) has
+  something to show; plain `requireAuth` is still used where only the id is needed (most
+  actions). Verified: `tsc`/`eslint`/build clean, `@shopify/polaris` and
+  `@shopify/polaris-viz` uninstalled from package.json (and the now-stale
+  `optimizeDeps.include` removed from `vite.config.ts`), every route live-tested
+  (200, no error boundary, real chart data in the SSR'd HTML) under both `npm run dev`
+  and a real `npm run start` production build. Net effect: CSS payload dropped from
+  ~462 KB (Polaris) to ~15 KB (own stylesheet). Old Polaris-only components
+  (`app/components/PasswordField.tsx`, `app/components/ClientOnly.tsx` -- the latter was
+  only needed because polaris-viz touched `window` during SSR, see the "window is not
+  defined" entry below, now moot) were deleted as dead code, not left behind.
 - **UI pass #2** (2026-10-05, "make the UI even better"): shop avatar/logo in the per-app
   shop table (Polaris `Avatar`, falls back to initials -- see note below), a centralized
   loading indicator (`AppLayout.tsx` renders a thin top progress bar via `useNavigation()`
@@ -411,6 +445,13 @@ app/
       metricsRollup.server.ts      Today's AppMetricsDaily row per app.
       classifyUninstallReason.ts   Preset-string matcher (multi-locale) + English keyword
                                     fallback on `description`, verified against real data.
+                                    Also exports `translateReason()` (2026-10-09) -- maps the
+                                    same confirmed non-English presets to English display text
+                                    for the "Actual reason given" column in /apps/:id. Only
+                                    covers the fixed dropdown presets, NOT free-text
+                                    `description` (user explicitly didn't want that translated
+                                    -- it'd need a real translation API/LLM call per the
+                                    "don't guess" principle already established here).
     jobs/
       queue.server.ts, worker.ts  pg-boss. Two schedules: 15-min sweep (events,
                                    transactions, metrics, per app) and a separate daily
@@ -443,15 +484,23 @@ app/
                           "What's next" for the auth/matching rules and the integration
                           snippet.
   components/
+    ui.tsx           The custom design system's primitives (2026-10-09 redesign --
+                     see "UI redesign" below): Badge, Button, LinkButton, Avatar,
+                     AppBadge, SegmentedControl, Select, PasswordField, LineChart,
+                     BrandMark. Plain components styled entirely via CSS classes from
+                     app/styles/app.css -- no Polaris underneath any of these.
     AppLayout.tsx    Shared page shell: left sidebar (nav + list of tracked apps,
-                     mobile-responsive drawer below 768px) + Polaris Page for the
-                     content area + a global top progress bar driven by
-                     useNavigation(). Every route wraps its content in this (inside its
-                     own <AppProvider>) instead of a layout *route*, to sidestep the
-                     exact nesting trap described in "Routing gotcha".
+                     mobile-responsive drawer below 760px, account footer showing the
+                     logged-in user's email) + main content area + a global top
+                     progress bar driven by useNavigation(). Every route wraps its
+                     content in this directly (no <AppProvider> anymore -- that was
+                     Polaris-only) instead of a layout *route*, to sidestep the exact
+                     nesting trap described in "Routing gotcha".
     DeltaBadge.tsx   current-vs-previous percent-change badge (green up / red down / "New" / "Flat").
-    ReasonBadge.tsx  Colored label for an UninstallReasonCategory.
-    RangeFilter.tsx  7/30/90-day segmented control, reused on dashboard.tsx.
+    ReasonBadge.tsx  Colored label for an UninstallReasonCategory; also exports
+                     `reasonColor()` (hex, for the uninstall-reason bar chart fills).
+    RangeFilter.tsx  7/30/90-day segmented control (ui.tsx's SegmentedControl), reused
+                     on dashboard.tsx.
   lib/formatRelativeTime.ts  "2 hours ago" style formatting, used wherever a date is shown.
   lib/email/
     provider.server.ts            Factory: Resend if RESEND_API_KEY+EMAIL_FROM set, else console.

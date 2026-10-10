@@ -1,10 +1,9 @@
 import type { ActionFunctionArgs } from "react-router";
 import { Form, useActionData } from "react-router";
-import { AppProvider, Page, Card, Text, BlockStack, FormLayout, TextField, Button, Banner } from "@shopify/polaris";
-import polarisTranslations from "@shopify/polaris/locales/en.json";
 import { useState } from "react";
 import { createPasswordResetToken } from "../lib/auth/session.server";
 import { getEmailProvider } from "../lib/email/provider.server";
+import { Button, BrandMark } from "../components/ui";
 
 const GENERIC_MESSAGE = "If an account exists for that email, a reset link has been sent.";
 
@@ -40,36 +39,49 @@ export default function ForgotPassword() {
   const [email, setEmail] = useState("");
 
   return (
-    <AppProvider i18n={polarisTranslations}>
-      <Page narrowWidth title="Forgot password">
-        <Card>
-          <BlockStack gap="300">
-            {actionData?.message && <Banner tone="success">{actionData.message}</Banner>}
-            {!actionData?.ok && (
-              <>
-                <Text as="p" tone="subdued">
-                  Enter your account email and we&apos;ll send a one-time reset link to it.
-                </Text>
-                <Form method="post">
-                  <FormLayout>
-                    <TextField
-                      label="Email"
-                      name="email"
-                      type="email"
-                      value={email}
-                      onChange={setEmail}
-                      autoComplete="email"
-                    />
-                    <Button submit variant="primary">
-                      Send reset link
-                    </Button>
-                  </FormLayout>
-                </Form>
-              </>
-            )}
-          </BlockStack>
-        </Card>
-      </Page>
-    </AppProvider>
+    <div className="login-wrap">
+      <div className="card login-card">
+        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 28 }}>
+          <BrandMark />
+          <span className="brand-name">Growth Portfolio</span>
+        </div>
+        <h1 className="h1" style={{ fontSize: 20 }}>
+          Forgot password
+        </h1>
+        {actionData?.message && (
+          <p className="msg-ok" style={{ background: "var(--color-success-bg)", padding: "9px 11px", borderRadius: 7, marginTop: 16 }}>
+            {actionData.message}
+          </p>
+        )}
+        {!actionData?.ok && (
+          <>
+            <p className="sub" style={{ marginTop: 10 }}>
+              Enter your account email and we&apos;ll send a one-time reset link to it.
+            </p>
+            <Form method="post" style={{ marginTop: 20 }}>
+              <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+                <div className="field">
+                  <label className="label" htmlFor="fp-email">
+                    Email
+                  </label>
+                  <input
+                    id="fp-email"
+                    className="input"
+                    type="email"
+                    name="email"
+                    autoComplete="email"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                  />
+                </div>
+                <Button type="submit" variant="primary" block>
+                  Send reset link
+                </Button>
+              </div>
+            </Form>
+          </>
+        )}
+      </div>
+    </div>
   );
 }

@@ -1,14 +1,10 @@
-import type { ReactNode } from "react";
 import type { LoaderFunctionArgs } from "react-router";
 import { useLoaderData, Link } from "react-router";
-import { AppProvider, Layout, Card, Text, BlockStack, InlineStack, Grid, DataTable, Banner } from "@shopify/polaris";
-import polarisTranslations from "@shopify/polaris/locales/en.json";
-import { LineChart } from "@shopify/polaris-viz";
-import { requireAuth } from "../lib/auth/session.server";
+import { requireUser } from "../lib/auth/session.server";
 import { AppLayout } from "../components/AppLayout";
 import { RangeFilter } from "../components/RangeFilter";
 import { DeltaBadge } from "../components/DeltaBadge";
-import { ClientOnly } from "../components/ClientOnly";
+import { LineChart } from "../components/ui";
 import db from "../db.server";
 
 const RANGE_VALUES = [7, 30, 90] as const;
@@ -24,8 +20,20 @@ function sumBy<T extends Record<string, unknown>>(rows: T[], key: keyof T): numb
   return rows.reduce((sum, row) => sum + (row[key] as number), 0);
 }
 
+const CHART_COLORS = ["#3E5BD6", "#E0702A", "#0F9D86", "#8B4FC9", "#C23A7A", "#8F7400"];
+
+function compactNumber(n: number): string {
+  const rounded = Math.round(n);
+  const abs = Math.abs(rounded);
+  if (abs >= 1000) {
+    const k = rounded / 1000;
+    return `${(abs >= 10000 ? k.toFixed(0) : k.toFixed(1)).replace(/\.0$/, "")}k`;
+  }
+  return String(rounded);
+}
+
 export const loader = async ({ request }: LoaderFunctionArgs) => {
-  await requireAuth(request);
+  const user = await requireUser(request);
   const rangeDays = parseRangeDays(request);
 
   const apps = await db.trackedApp.findMany({ orderBy: { createdAt: "asc" } });
@@ -59,7 +67,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const perAppTrend = apps.map((a) => ({
     id: a.id,
     name: a.name,
-    series: allDates.map((date) => ({ key: date, value: byAppByDate.get(a.id)?.get(date) ?? 0 })),
+    series: allDates.map((date) => byAppByDate.get(a.id)?.get(date) ?? 0),
   }));
 
   const currentTotals = {
@@ -103,13 +111,14 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   }
   const revenueTrend = [...revenueByDateByCurrency.entries()].map(([currency, byDateForCurrency]) => ({
     currency,
-    series: [...byDateForCurrency.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([key, value]) => ({ key, value })),
+    labels: [...byDateForCurrency.keys()].sort((a, b) => a.localeCompare(b)),
+    series: [...byDateForCurrency.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([, value]) => value),
   }));
 
   return {
     rangeDays,
     apps: apps.map((a) => ({ id: a.id, name: a.name, activeInstalls: activeByApp.get(a.id) ?? 0 })),
-    trend,
+    trend: trend.map(([date, v]) => ({ date, ...v })),
     perAppTrend,
     revenueTrend,
     currentTotals,
@@ -117,6 +126,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     totalActive,
     activeAtRangeStart,
     revenueByCurrency,
+    email: user.email,
   };
 };
 
@@ -132,235 +142,207 @@ export default function Dashboard() {
     totalActive,
     activeAtRangeStart,
     revenueByCurrency,
+    email,
   } = useLoaderData<typeof loader>();
 
+  const labels = trend.map((t) => t.date);
+
   return (
-    <AppProvider i18n={polarisTranslations}>
-      <AppLayout title="Portfolio Overview" subtitle="Installs, uninstalls, and growth across every tracked app" apps={apps}>
-      <Layout>
-        <Layout.Section>
+    <AppLayout apps={apps} userEmail={email}>
+      <header className="page-head">
+        <div>
+          <h1 className="h1">Portfolio Overview</h1>
+          <p className="sub">Installs, uninstalls, and growth across every tracked app.</p>
+        </div>
+        <div className="head-actions">
           <RangeFilter />
-        </Layout.Section>
+        </div>
+      </header>
 
-        {apps.length === 0 && (
-          <Layout.Section>
-            <Banner tone="info" title="No apps tracked yet">
-              <p>
-                Go to <Link to="/apps">Apps</Link> and add your first one to start syncing install/uninstall data.
-              </p>
-            </Banner>
-          </Layout.Section>
-        )}
+      {apps.length === 0 && (
+        <div className="card" style={{ padding: 16 }}>
+          <p style={{ margin: 0 }}>
+            Go to <Link to="/apps">Apps</Link> and add your first one to start syncing install/uninstall data.
+          </p>
+        </div>
+      )}
 
-        <Layout.Section>
-          <Grid>
-            <Grid.Cell columnSpan={{ xs: 6, sm: 3, md: 3, lg: 3, xl: 3 }}>
-              <StatCard
-                label="Active installs (all apps)"
-                value={totalActive.toLocaleString()}
-                badge={<DeltaBadge current={totalActive} previous={activeAtRangeStart} />}
-              />
-            </Grid.Cell>
-            <Grid.Cell columnSpan={{ xs: 6, sm: 3, md: 3, lg: 3, xl: 3 }}>
-              <StatCard
-                label={`New installs (${rangeDays}d)`}
-                value={currentTotals.newInstalls.toLocaleString()}
-                badge={<DeltaBadge current={currentTotals.newInstalls} previous={previousTotals.newInstalls} />}
-              />
-            </Grid.Cell>
-            <Grid.Cell columnSpan={{ xs: 6, sm: 3, md: 3, lg: 3, xl: 3 }}>
-              <StatCard
-                label={`Uninstalls (${rangeDays}d)`}
-                value={currentTotals.uninstalls.toLocaleString()}
-                badge={<DeltaBadge current={currentTotals.uninstalls} previous={previousTotals.uninstalls} />}
-              />
-            </Grid.Cell>
-            <Grid.Cell columnSpan={{ xs: 6, sm: 3, md: 3, lg: 3, xl: 3 }}>
-              <StatCard
-                label={`Reinstalls (${rangeDays}d)`}
-                value={currentTotals.reinstalls.toLocaleString()}
-                badge={<DeltaBadge current={currentTotals.reinstalls} previous={previousTotals.reinstalls} />}
-              />
-            </Grid.Cell>
-          </Grid>
-        </Layout.Section>
+      <div className="stats">
+        <div className="card stat">
+          <div className="stat-top">
+            <span className="stat-label">Active installs (all apps)</span>
+            <DeltaBadge current={totalActive} previous={activeAtRangeStart} />
+          </div>
+          <div className="stat-value num">{totalActive.toLocaleString()}</div>
+        </div>
+        <div className="card stat">
+          <div className="stat-top">
+            <span className="stat-label">New installs ({rangeDays}d)</span>
+            <DeltaBadge current={currentTotals.newInstalls} previous={previousTotals.newInstalls} />
+          </div>
+          <div className="stat-value num">{currentTotals.newInstalls.toLocaleString()}</div>
+        </div>
+        <div className="card stat">
+          <div className="stat-top">
+            <span className="stat-label">Uninstalls ({rangeDays}d)</span>
+            <DeltaBadge current={currentTotals.uninstalls} previous={previousTotals.uninstalls} />
+          </div>
+          <div className="stat-value num">{currentTotals.uninstalls.toLocaleString()}</div>
+        </div>
+        <div className="card stat">
+          <div className="stat-top">
+            <span className="stat-label">Reinstalls ({rangeDays}d)</span>
+            <DeltaBadge current={currentTotals.reinstalls} previous={previousTotals.reinstalls} />
+          </div>
+          <div className="stat-value num">{currentTotals.reinstalls.toLocaleString()}</div>
+        </div>
+      </div>
 
-        {revenueByCurrency.length > 0 && (
-          <Layout.Section>
-            <Card>
-              <BlockStack gap="200">
-                <Text as="h2" variant="headingMd">
-                  Revenue ({rangeDays}d)
-                </Text>
-                <InlineStack gap="600">
-                  {revenueByCurrency.map((r) => (
-                    <BlockStack gap="100" key={r.currencyCode ?? "unknown"}>
-                      <Text as="span" tone="subdued">
-                        {r.currencyCode ?? "Unknown currency"}
-                      </Text>
-                      <Text as="p" variant="headingLg">
-                        {(r._sum.grossAmount ?? 0).toLocaleString(undefined, {
-                          style: r.currencyCode ? "currency" : "decimal",
-                          currency: r.currencyCode ?? undefined,
-                        })}
-                      </Text>
-                    </BlockStack>
-                  ))}
-                </InlineStack>
-              </BlockStack>
-            </Card>
-          </Layout.Section>
-        )}
-
-        <Layout.Section>
-          <Card>
-            <BlockStack gap="300">
-              <Text as="h2" variant="headingMd">
-                Active installs over time (all apps combined)
-              </Text>
-              {trend.length > 1 ? (
-                <div style={{ height: 240 }}>
-                  <ClientOnly>
-                    {() => (
-                      <LineChart
-                        data={[
-                          {
-                            name: "Active installs",
-                            data: trend.map(([date, v]) => ({ key: date, value: v.activeInstalls })),
-                          },
-                        ]}
-                      />
-                    )}
-                  </ClientOnly>
+      {revenueByCurrency.length > 0 && (
+        <section className="card">
+          <div className="card-head">
+            <div>
+              <h2 className="card-title">Revenue ({rangeDays}d)</h2>
+            </div>
+          </div>
+          <div className="card-body" style={{ display: "flex", gap: 40, flexWrap: "wrap" }}>
+            {revenueByCurrency.map((r) => (
+              <div key={r.currencyCode ?? "unknown"}>
+                <div className="stat-label">{r.currencyCode ?? "Unknown currency"}</div>
+                <div className="stat-value" style={{ fontSize: 22, marginTop: 4 }}>
+                  {(r._sum.grossAmount ?? 0).toLocaleString(undefined, {
+                    style: r.currencyCode ? "currency" : "decimal",
+                    currency: r.currencyCode ?? undefined,
+                  })}
                 </div>
-              ) : (
-                <Text as="p" tone="subdued">
-                  Not enough history yet to chart a trend — check back after a few sync runs.
-                </Text>
-              )}
-            </BlockStack>
-          </Card>
-        </Layout.Section>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
 
-        <Layout.Section>
-          <Card>
-            <BlockStack gap="300">
-              <Text as="h2" variant="headingMd">
-                New installs vs. uninstalls
-              </Text>
-              {trend.length > 1 ? (
-                <div style={{ height: 240 }}>
-                  <ClientOnly>
-                    {() => (
-                      <LineChart
-                        data={[
-                          { name: "New installs", data: trend.map(([date, v]) => ({ key: date, value: v.newInstalls })) },
-                          { name: "Uninstalls", data: trend.map(([date, v]) => ({ key: date, value: v.uninstalls })) },
-                          { name: "Reinstalls", data: trend.map(([date, v]) => ({ key: date, value: v.reinstalls })) },
-                        ]}
-                      />
-                    )}
-                  </ClientOnly>
-                </div>
-              ) : (
-                <Text as="p" tone="subdued">
-                  Not enough history yet to chart a trend — check back after a few sync runs.
-                </Text>
-              )}
-            </BlockStack>
-          </Card>
-        </Layout.Section>
+      <section className="card">
+        <div className="card-head">
+          <div>
+            <h2 className="card-title">Active installs over time</h2>
+            <p className="card-meta">All apps combined · daily snapshot</p>
+          </div>
+        </div>
+        <div className="card-body">
+          {trend.length > 1 ? (
+            <LineChart
+              series={[{ name: "Active installs", color: "#3E5BD6", values: trend.map((t) => t.activeInstalls) }]}
+              labels={labels}
+              area
+              formatValue={compactNumber}
+              formatTooltip={(v) => Math.round(v).toLocaleString()}
+            />
+          ) : (
+            <p className="muted">Not enough history yet to chart a trend — check back after a few sync runs.</p>
+          )}
+        </div>
+      </section>
 
-        {perAppTrend.length > 1 && (
-          <Layout.Section>
-            <Card>
-              <BlockStack gap="300">
-                <Text as="h2" variant="headingMd">
-                  Active installs by app
-                </Text>
-                {trend.length > 1 ? (
-                  <div style={{ height: 240 }}>
-                    <ClientOnly>
-                      {() => <LineChart data={perAppTrend.map((a) => ({ name: a.name, data: a.series }))} />}
-                    </ClientOnly>
-                  </div>
-                ) : (
-                  <Text as="p" tone="subdued">
-                    Not enough history yet to chart a trend — check back after a few sync runs.
-                  </Text>
-                )}
-              </BlockStack>
-            </Card>
-          </Layout.Section>
-        )}
+      <div className="grid-2">
+        <section className="card">
+          <div className="card-head">
+            <div>
+              <h2 className="card-title">New installs vs. uninstalls vs. reinstalls</h2>
+              <p className="card-meta">All apps · per day</p>
+            </div>
+          </div>
+          <div className="card-body">
+            {trend.length > 1 ? (
+              <LineChart
+                series={[
+                  { name: "New installs", color: "#3E5BD6", values: trend.map((t) => t.newInstalls) },
+                  { name: "Uninstalls", color: "#E0702A", values: trend.map((t) => t.uninstalls) },
+                  { name: "Reinstalls", color: "#0F9D86", values: trend.map((t) => t.reinstalls) },
+                ]}
+                labels={labels}
+                zeroBased
+                showLegend
+                legendMetric="total"
+              />
+            ) : (
+              <p className="muted">Not enough history yet to chart a trend — check back after a few sync runs.</p>
+            )}
+          </div>
+        </section>
 
-        <Layout.Section>
-          <Card>
-            <BlockStack gap="300">
-              <Text as="h2" variant="headingMd">
-                Revenue over time
-              </Text>
-              {revenueTrend.length > 0 ? (
-                <div style={{ height: 240 }}>
-                  <ClientOnly>
-                    {() => (
-                      <LineChart
-                        data={revenueTrend.map((r) => ({
-                          name: r.currency === "unknown" ? "Unknown currency" : r.currency,
-                          data: r.series,
-                        }))}
-                      />
-                    )}
-                  </ClientOnly>
-                </div>
-              ) : (
-                <Text as="p" tone="subdued">
-                  No revenue recorded in this period yet.
-                </Text>
-              )}
-            </BlockStack>
-          </Card>
-        </Layout.Section>
+        <section className="card">
+          <div className="card-head">
+            <div>
+              <h2 className="card-title">Active installs by app</h2>
+              <p className="card-meta">One line per tracked app</p>
+            </div>
+          </div>
+          <div className="card-body">
+            {perAppTrend.length > 1 && trend.length > 1 ? (
+              <LineChart
+                series={perAppTrend.map((a, i) => ({ name: a.name, color: CHART_COLORS[i % CHART_COLORS.length], values: a.series }))}
+                labels={labels}
+                zeroBased
+                formatValue={compactNumber}
+                formatTooltip={(v) => Math.round(v).toLocaleString()}
+                showLegend
+                legendMetric="last"
+              />
+            ) : (
+              <p className="muted">Not enough history yet to chart a trend — check back after a few sync runs.</p>
+            )}
+          </div>
+        </section>
+      </div>
 
-        {apps.length > 0 && (
-          <Layout.Section>
-            <Card>
-              <BlockStack gap="200">
-                <Text as="h2" variant="headingMd">
-                  By app
-                </Text>
-                <DataTable
-                  columnContentTypes={["text", "numeric"]}
-                  headings={["App", "Active installs"]}
-                  rows={apps.map((a) => [
-                    <Link key={a.id} to={`/apps/${a.id}`}>
-                      {a.name}
-                    </Link>,
-                    a.activeInstalls,
-                  ])}
-                />
-              </BlockStack>
-            </Card>
-          </Layout.Section>
-        )}
-      </Layout>
-      </AppLayout>
-    </AppProvider>
-  );
-}
+      <section className="card">
+        <div className="card-head">
+          <div>
+            <h2 className="card-title">Revenue over time</h2>
+          </div>
+        </div>
+        <div className="card-body">
+          {revenueTrend.length > 0 ? (
+            <LineChart
+              series={revenueTrend.map((r, i) => ({
+                name: r.currency === "unknown" ? "Unknown currency" : r.currency,
+                color: CHART_COLORS[i % CHART_COLORS.length],
+                values: r.series,
+              }))}
+              labels={revenueTrend[0]?.labels ?? labels}
+              area
+              formatValue={(v) => `$${compactNumber(v)}`}
+              formatTooltip={(v) => v.toLocaleString(undefined, { style: "currency", currency: "USD" })}
+            />
+          ) : (
+            <p className="muted">No revenue recorded in this period yet.</p>
+          )}
+        </div>
+      </section>
 
-function StatCard({ label, value, badge }: { label: string; value: string; badge: ReactNode }) {
-  return (
-    <Card>
-      <BlockStack gap="200">
-        <Text as="span" tone="subdued">
-          {label}
-        </Text>
-        <Text as="p" variant="heading2xl">
-          {value}
-        </Text>
-        {badge}
-      </BlockStack>
-    </Card>
+      {apps.length > 0 && (
+        <section className="card">
+          <div className="card-head">
+            <div>
+              <h2 className="card-title">By app</h2>
+            </div>
+          </div>
+          <div className="tscroll">
+            <div className="thead" style={{ gridTemplateColumns: "minmax(240px, 1fr) 160px" }}>
+              <span>App</span>
+              <span>Active installs</span>
+            </div>
+            {apps.map((a) => (
+              <div key={a.id} className="trow" style={{ gridTemplateColumns: "minmax(240px, 1fr) 160px" }}>
+                <Link to={`/apps/${a.id}`} style={{ fontWeight: 500 }}>
+                  {a.name}
+                </Link>
+                <span className="num">{a.activeInstalls.toLocaleString()}</span>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
+    </AppLayout>
   );
 }

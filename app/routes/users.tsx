@@ -1,45 +1,60 @@
 import type { LoaderFunctionArgs } from "react-router";
 import { Link, useLoaderData } from "react-router";
-import { AppProvider, Layout, Card, DataTable, Badge, InlineStack } from "@shopify/polaris";
-import polarisTranslations from "@shopify/polaris/locales/en.json";
-import { requireAuth } from "../lib/auth/session.server";
+import { requireUser } from "../lib/auth/session.server";
 import { AppLayout } from "../components/AppLayout";
+import { Badge, Avatar, LinkButton } from "../components/ui";
 import { formatRelativeTime } from "../lib/formatRelativeTime";
 import db from "../db.server";
 
+const GRID = { display: "grid", gridTemplateColumns: "minmax(220px, 1.4fr) 180px", alignItems: "center", columnGap: 14 } as const;
+
 export const loader = async ({ request }: LoaderFunctionArgs) => {
-  const currentUserId = await requireAuth(request);
-  const users = await db.user.findMany({
-    orderBy: { createdAt: "asc" },
-    select: { id: true, email: true, createdAt: true },
-  });
-  return { users, currentUserId };
+  const user = await requireUser(request);
+  const [users, apps] = await Promise.all([
+    db.user.findMany({ orderBy: { createdAt: "asc" }, select: { id: true, email: true, createdAt: true } }),
+    db.trackedApp.findMany({ orderBy: { createdAt: "asc" }, select: { id: true, name: true } }),
+  ]);
+  return { users, currentUserId: user.id, email: user.email, apps };
 };
 
 export default function Users() {
-  const { users, currentUserId } = useLoaderData<typeof loader>();
+  const { users, currentUserId, email, apps } = useLoaderData<typeof loader>();
 
   return (
-    <AppProvider i18n={polarisTranslations}>
-      <AppLayout title="Users" subtitle="Everyone with access to this dashboard">
-        <Layout>
-          <Layout.Section>
-            <Card>
-              <DataTable
-                columnContentTypes={["text", "text"]}
-                headings={["Email", "Joined"]}
-                rows={users.map((u) => [
-                  <InlineStack key={u.id} gap="200" blockAlign="center">
-                    <Link to={`/users/${u.id}`}>{u.email}</Link>
-                    {u.id === currentUserId && <Badge tone="info">You</Badge>}
-                  </InlineStack>,
-                  formatRelativeTime(u.createdAt),
-                ])}
-              />
-            </Card>
-          </Layout.Section>
-        </Layout>
-      </AppLayout>
-    </AppProvider>
+    <AppLayout apps={apps} userEmail={email}>
+      <header className="page-head">
+        <div>
+          <h1 className="h1">Users</h1>
+          <p className="sub">Everyone with access to this dashboard.</p>
+        </div>
+        <LinkButton to="/register" variant="secondary">
+          <svg className="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden>
+            <path d="M12 5v14M5 12h14" />
+          </svg>
+          New account
+        </LinkButton>
+      </header>
+
+      <section className="card">
+        <div className="tscroll" style={{ borderRadius: 10 }}>
+          <div className="thead" style={{ ...GRID, borderTop: 0 }}>
+            <span>Email</span>
+            <span>Joined</span>
+          </div>
+          {users.map((u) => (
+            <div key={u.id} className="trow" style={GRID}>
+              <div className="cell-shop">
+                <Avatar name={u.email} />
+                <Link to={`/users/${u.id}`} style={{ fontWeight: 500 }}>
+                  {u.email}
+                </Link>
+                {u.id === currentUserId && <Badge tone="brand">You</Badge>}
+              </div>
+              <span className="muted">{formatRelativeTime(u.createdAt)}</span>
+            </div>
+          ))}
+        </div>
+      </section>
+    </AppLayout>
   );
 }

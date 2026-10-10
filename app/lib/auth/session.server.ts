@@ -141,6 +141,16 @@ export async function requireAuth(request: Request): Promise<string> {
   return userId;
 }
 
+// For loaders that need to show who's logged in (the sidebar's account
+// footer) -- one extra query over requireAuth, so only call it where that's
+// actually displayed, not from every action.
+export async function requireUser(request: Request): Promise<{ id: string; email: string }> {
+  const userId = await requireAuth(request);
+  const user = await db.user.findUnique({ where: { id: userId }, select: { email: true } });
+  if (!user) throw redirect("/login");
+  return { id: userId, email: user.email };
+}
+
 export async function destroySession(request: Request): Promise<Response> {
   const session = await sessionStorage.getSession(request.headers.get("Cookie"));
   return redirect("/login", {

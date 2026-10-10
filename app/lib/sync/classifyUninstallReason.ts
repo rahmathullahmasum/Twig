@@ -37,6 +37,27 @@ const KNOWN_REASON_PRESETS: Record<string, UninstallReasonCategory> = {
   "no me satisfacen las funciones de la app": "MISSING_FEATURE", // es: "App's features don't satisfy me"
 };
 
+// English display text for the non-English preset keys above, so the "Actual
+// reason given" column can show something readable regardless of the
+// merchant's locale. Only covers the fixed dropdown presets (not free-text
+// `description`, which isn't translated -- see CLAUDE.md for why). Keyed by
+// the same lowercased text as KNOWN_REASON_PRESETS; add an entry here
+// whenever a new non-English preset is confirmed there.
+const REASON_TRANSLATIONS: Record<string, string> = {
+  "app wird derzeit nicht genutzt": "Not using app now", // de
+  "测试多个应用": "Testing multiple apps", // zh
+  "test de plusieurs applis": "Testing multiple apps", // fr
+  "no me satisfacen las funciones de la app": "Missing features I need", // es
+};
+
+// Translates a known non-English dropdown reason to English for display.
+// Returns the original text unchanged if it's not a recognized preset
+// (including if it's already English) -- never guesses a translation.
+export function translateReason(reason?: string | null): string | null {
+  if (!reason) return reason ?? null;
+  return REASON_TRANSLATIONS[reason.trim().toLowerCase()] ?? reason;
+}
+
 const KEYWORD_RULES: { category: UninstallReasonCategory; keywords: string[] }[] = [
   { category: "PRICING", keywords: ["price", "expensive", "cost", "afford", "cheap", "money"] },
   { category: "MISSING_FEATURE", keywords: ["feature", "doesn't have", "missing", "wish it had", "needed it to"] },
